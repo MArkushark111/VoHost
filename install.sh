@@ -5,11 +5,26 @@
 set -euo pipefail
 DASH_PORT="${DASH_PORT:-8080}"
 MC_PORT="${MC_PORT:-25565}"
-SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="${VOHOST_REPO:-MArkushark111/VoHost}"
+BRANCH="${VOHOST_BRANCH:-main}"
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /tmp/vohost-src)"
 DEST="/opt/vohost"
 
 if [ "$(id -u)" -ne 0 ]; then echo "Run as root: sudo bash install.sh"; exit 1; fi
 echo "=== VoHost installer (Ubuntu 26.04.1) ==="
+
+# Self-bootstrap: supports `curl ... | sudo bash` where $0 has no repo files.
+if [ ! -f "$SRC_DIR/scripts/jdk-setup.sh" ]; then
+  echo "[VoHost] no local source at $SRC_DIR — fetching $REPO@$BRANCH from GitHub..."
+  apt-get update -y
+  apt-get install -y curl wget ca-certificates tar
+  rm -rf /tmp/vohost-src "/tmp/VoHost-$BRANCH"
+  wget -qO /tmp/vohost.tar.gz "https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz"
+  tar xzf /tmp/vohost.tar.gz -C /tmp
+  SRC_DIR="/tmp/VoHost-$BRANCH"
+  [ -f "$SRC_DIR/scripts/jdk-setup.sh" ] || { echo "[VoHost] FATAL: bootstrap failed, $SRC_DIR/scripts/jdk-setup.sh missing"; exit 1; }
+  echo "[VoHost] source ready at $SRC_DIR"
+fi
 
 apt-get update -y
 apt-get install -y python3 python3-venv python3-pip curl wget unzip ufw sudo
@@ -62,4 +77,6 @@ echo "Services  : systemctl status vohost-dashboard vohost-mc"
 echo "Logs cmd  : vohost (or vohost-logs) — reopens window, press q to close, server keeps running"
 echo ""
 echo "Opening live log window (q to close)..."
+hash -r || true
+command -v vohost >/dev/null 2>&1 || echo "[VoHost] WARN: /usr/local/bin not in PATH for this shell (try: export PATH=$PATH:/usr/local/bin)"
 bash "$DEST/scripts/log-window.sh" || true
