@@ -5,7 +5,7 @@ from .config import DATA
 
 CACHE = DATA / "version_cache.json"
 TTL = 3600
-UA = {"User-Agent": "VoHost/1.0"}
+UA = {"User-Agent": "VoHost/1.0 (+https://github.com/MArkushark111/VoHost)"}
 
 def _cache_get(key):
     try:
@@ -67,9 +67,10 @@ def quilt_loader_versions() -> list[str]:
     return [x["version"] for x in d][:20]
 
 def paper_builds(mc: str) -> list[int]:
+    """PaperMC build numbers via the Fill service (api.papermc.io/v2 was retired — 410)."""
     try:
-        d = _get(f"https://api.papermc.io/v2/projects/paper/versions/{mc}", "paper-" + mc)
-        return d.get("builds", [])[-20:]
+        d = _get(f"https://fill.papermc.io/v3/projects/paper/versions/{mc}/builds", "paper-builds-" + mc)
+        return [b.get("id") for b in d if isinstance(b, dict)][:20]
     except Exception:
         return []
 

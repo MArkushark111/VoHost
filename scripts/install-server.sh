@@ -9,8 +9,9 @@ SID="${VOHOST_SERVER_ID:-}"
 mkdir -p "$DEST"; cd "$DEST" || exit 1
 
 have() { command -v "$1" >/dev/null 2>&1; }
-ureq() { if have curl; then curl -fsSL "$1"; elif have wget; then wget -q -O - "$1"; else echo "ERROR: neither curl nor wget installed" >&2; return 1; fi; }
-dl()   { if have curl; then curl -fsSL "$1" -o "$2"; elif have wget; then wget -q -O "$2" "$1"; else echo "ERROR: neither curl nor wget installed" >&2; return 1; fi; }
+UAH="User-Agent: VoHost/1.0 (+https://github.com/MArkushark111/VoHost)"
+ureq() { if have curl; then curl -fsSL -H "$UAH" "$1"; elif have wget; then wget -q -O - --header="$UAH" "$1"; else echo "ERROR: neither curl nor wget installed" >&2; return 1; fi; }
+dl()   { if have curl; then curl -fsSL -H "$UAH" "$1" -o "$2"; elif have wget; then wget -q -O "$2" --header="$UAH" "$1"; else echo "ERROR: neither curl nor wget installed" >&2; return 1; fi; }
 
 OK=0
 case "$LOADER" in
@@ -22,8 +23,30 @@ case "$LOADER" in
       dl "$JAR" server.jar && { echo "OK server.jar ($MC vanilla)"; OK=1; }
     fi ;;
   paper)
-    B="$BUILD"; [ "$B" = latest ] && B="$(ureq https://api.papermc.io/v2/projects/paper/versions/$MC | python3 -c "import json,sys;print(max(json.load(sys.stdin)['builds']))" 2>/dev/null)"
-    if [ -n "${B:-}" ]; then dl "https://api.papermc.io/v2/projects/paper/versions/$MC/builds/$B/downloads/paper-$MC-$B.jar" server.jar && { echo "OK server.jar (paper $MC build $B)"; OK=1; }; fi ;;
+    # PaperMC retired api.papermc.io/v2 (410 Gone); downloads now live on the
+    # Fill service (fill.papermc.io/v3) which requires a User-Agent header.
+    # /versions/$MC/builds is newest-first: pick the latest STABLE build, else
+    # the newest build overall, and grab its direct file URL.
+    JS="$(ureq "https://fill.papermc.io/v3/projects/paper/versions/$MC/builds" 2>/dev/null)"
+    if [ -n "$JS" ]; then
+      if [ "$BUILD" != "latest" ]; then
+        URL="$(printf '%s' "$JS" | python3 -c "import json,sys
+d=json.load(sys.stdin)
+b=next((x for x in d if x.get('id')==int('$BUILD')),None)
+print(b['downloads']['server:default']['url'] if b else '')" 2>/dev/null)"
+        BN="$BUILD"
+      else
+        URL="$(printf '%s' "$JS" | python3 -c "import json,sys
+d=json.load(sys.stdin)
+b=next((x for x in d if x.get('channel')=='STABLE'),None) or (d[0] if d else None)
+print(b['downloads']['server:default']['url'] if b else '')" 2>/dev/null)"
+        BN="$(printf '%s' "$JS" | python3 -c "import json,sys
+d=json.load(sys.stdin)
+b=next((x for x in d if x.get('channel')=='STABLE'),None) or (d[0] if d else None)
+print(b['id'] if b else '')" 2>/dev/null)"
+      fi
+      if [ -n "$URL" ]; then dl "$URL" server.jar && { echo "OK server.jar (paper $MC build $BN)"; OK=1; }; fi
+    fi ;;
   purpur)
     B="$BUILD"; [ "$B" = latest ] && B="$(ureq https://api.purpurmc.org/v2/purpur/$MC | python3 -c "import json,sys;print(json.load(sys.stdin)['builds']['latest'])" 2>/dev/null)"
     if [ -n "${B:-}" ]; then dl "https://api.purpurmc.org/v2/purpur/$MC/$B/download" server.jar && { echo "OK server.jar (purpur $MC build $B)"; OK=1; }; fi ;;
