@@ -23,6 +23,41 @@ function ansi(s) {
 }
 const ok = r => r && r.ok !== false;
 
+// ---------- custom UI dialogs (no browser alert/confirm/prompt) ----------
+function toast(msg, type) {
+  let box = document.getElementById("toasts");
+  if (!box) { box = document.createElement("div"); box.id = "toasts"; document.body.appendChild(box); }
+  const t = document.createElement("div");
+  t.className = "toast " + (type || "info");
+  t.textContent = msg;
+  box.appendChild(t);
+  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, type === "error" ? 6000 : 3500);
+}
+function ask(msg) {
+  return new Promise(res => {
+    const ov = document.createElement("div"); ov.className = "overlay";
+    ov.innerHTML = `<div class="modal" style="max-width:430px"><p style="margin:0 0 14px">${esc(msg)}</p><div class="row"><button class="act ok" data-y="1">Yes</button><button class="act" data-y="0">Cancel</button></div></div>`;
+    document.body.appendChild(ov);
+    const done = v => { ov.remove(); res(v); };
+    ov.querySelector("[data-y='1']").onclick = () => done(true);
+    ov.querySelector("[data-y='0']").onclick = () => done(false);
+    ov.addEventListener("click", e => { if (e.target === ov) done(false); });
+  });
+}
+function askText(title, def, secret) {
+  return new Promise(res => {
+    const ov = document.createElement("div"); ov.className = "overlay";
+    ov.innerHTML = `<div class="modal" style="max-width:430px"><h3 style="margin:0 0 12px">${esc(title)}</h3><input id="atIn" type="${secret ? "password" : "text"}" value="${esc(def || "")}"><div class="row"><button class="act ok" data-y="1">OK</button><button class="act" data-y="0">Cancel</button></div></div>`;
+    document.body.appendChild(ov);
+    const inp = ov.querySelector("#atIn"); inp.focus(); inp.select();
+    const done = v => { ov.remove(); res(v); };
+    ov.querySelector("[data-y='1']").onclick = () => done(inp.value);
+    ov.querySelector("[data-y='0']").onclick = () => done(null);
+    inp.addEventListener("keydown", e => { if (e.key === "Enter") done(inp.value); });
+    ov.addEventListener("click", e => { if (e.target === ov) done(null); });
+  });
+}
+
 // ---------- navigation ----------
 function show(tab) {
   document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
@@ -50,22 +85,23 @@ async function setupState() { try { const r = await fetch("/api/setup-state"); r
 
 $("#btnLogin").onclick = async () => {
   if (await setupState()) {
-    const u = prompt("Create admin - username", "admin"); if (!u) return;
-    const p = prompt("Create admin - password (min 4 chars)"); if (!p) return;
-    if (p !== prompt("repeat password")) { alert("passwords differ"); return; }
+    const u = await askText("Create admin - username", "admin"); if (!u) return;
+    const p = await askText("Create admin - password (min 4 chars)", "", true); if (!p) return;
+    const p2 = await askText("Repeat password", "", true);
+    if (p2 === null || p !== p2) { toast("Passwords differ, try again.", "error"); return; }
     const r = await fetch("/api/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, password: p }) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) { alert("setup failed: " + (j.detail || r.status)); return; }
+    if (!r.ok) { toast("Setup failed: " + (j.detail || r.status), "error"); return; }
     TOKEN = r.headers.get("x-token") || ""; localStorage.setItem("vohost_tok", TOKEN);
-    $("#btnLogin").textContent = "Logout"; refreshMe(); loadServers(); return;
+    $("#btnLogin").textContent = "Logout"; toast("Admin created - welcome!", "ok"); refreshMe(); loadServers(); return;
   }
-  const u = prompt("username"); if (!u) return;
-  const p = prompt("password"); if (p === null) return;
+  const u = await askText("Username"); if (!u) return;
+  const p = await askText("Password", "", true); if (p === null) return;
   const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, password: p }) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) { alert("login failed: " + (j.detail || r.status)); return; }
+  if (!r.ok) { toast("Login failed: " + (j.detail || r.status), "error"); return; }
   TOKEN = r.headers.get("x-token") || ""; localStorage.setItem("vohost_tok", TOKEN);
-  $("#btnLogin").textContent = "Logout"; refreshMe(); loadServers();
+  $("#btnLogin").textContent = "Logout"; toast("Logged in as " + u, "ok"); refreshMe(); loadServers();
 };
 async function refreshMe() { try { const j = await api("/api/me"); const u = j.user; $("#me").textContent = u ? `${u.username} (${u.role})` : ""; $("#btnLogin").textContent = u ? "Logout" : "Login"; } catch (e) { $("#me").textContent = ""; $("#btnLogin").textContent = "Login"; } }
 
@@ -90,7 +126,7 @@ async function loadServers() {
   } catch (e) { $("#srvList").textContent = e.message; }
 }
 window.openSrv = async id => { SID = id; localStorage.setItem("vohost_sid", SID); show("server"); connectWS(); loadStatus(); };
-window.delSrv = async id => { if (!confirm("Delete " + id + "? (files are kept)") ) return; await api("/api/servers/" + id, { method: "DELETE" }); SID = ""; CURSRV = null; localStorage.removeItem("vohost_sid"); loadServers(); };
+window.delSrv = async id => { if (!(await ask("Delete server " + id + "? (files are kept)"))) return; await api("/api/servers/" + id, { method: "DELETE" }); SID = ""; CURSRV = null; localStorage.removeItem("vohost_sid"); toast("Server deleted.", "ok"); loadServers(); };
 $("#nsGo").onclick = async () => {
   try {
     const r = await api("/api/servers", { method: "POST", body: JSON.stringify({ name: $("#nsName").value || "server", network_mode: $("#nsNet").value, memory_max: $("#nsMem").value || "4G" }) });
@@ -102,8 +138,8 @@ $("#nsGo").onclick = async () => {
 window.copyIp = id => {
   const el = document.getElementById(id); if (!el) return;
   const v = (el.textContent || "").trim();
-  if (!v || v === "-" || v === "fetching..." || v === "fetching WAN...") { alert("Address not available yet."); return; }
-  (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => alert("Copied: " + v)).catch(() => { const t = document.createElement("textarea"); t.value = v; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); alert("Copied: " + v); });
+  if (!v || v === "-" || v === "fetching..." || v === "fetching WAN...") { toast("Address not available yet.", "error"); return; }
+  (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => toast("Copied: " + v, "ok")).catch(() => { const t = document.createElement("textarea"); t.value = v; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); toast("Copied: " + v, "ok"); });
 };
 // ---------- server panel ----------
 let hist = [];
@@ -143,9 +179,9 @@ document.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
       $("#term").innerHTML += "\n" + ansi("[start] " + r.note) + "\n";
     }
     setTimeout(loadStatus, 1500);
-  } catch (e) { alert(e.message); }
+  } catch (e) { toast(e.message, "error"); }
 });
-$("#btnEula").onclick = async () => { await api("/api/eula", { method: "POST", body: JSON.stringify({ accept: true }) }); alert("EULA accepted"); };
+$("#btnEula").onclick = async () => { try { await api("/api/eula", { method: "POST", body: JSON.stringify({ accept: true }) }); toast("EULA accepted.", "ok"); } catch (e) { toast(e.message, "error"); } };
 $("#netGo").onclick = async () => { await api("/api/servers/" + SID, { method: "PUT", body: JSON.stringify({ network_mode: $("#netSel").value }) }); loadStatus(); };
 setInterval(() => { if (!document.querySelector("[data-s='server']").classList.contains("hide")) loadStatus(); }, 4000);
 
@@ -227,8 +263,8 @@ $("#optSave").onclick = async () => {
   props["enforce-secure-profile"] = cracked ? "false" : "true";
   try {
     await api("/api/options", { method: "PUT", body: JSON.stringify({ props, server_id: SID, timezone: $("#optTz").value, env: $("#optEnv").value, icon_b64: window._iconB64 || undefined, curseforge_api_key: $("#optCF").value || undefined, discord_webhook: $("#optDiscord").value || undefined }) });
-    alert("Saved. Restart the server to apply.");
-  } catch (e) { alert(e.message); }
+    toast("Saved. Restart the server to apply.", "ok");
+  } catch (e) { toast(e.message, "error"); }
 };
 
 // ---------- players ----------
@@ -263,7 +299,7 @@ async function loadSeen() {
   } catch (e) { $("#plSeen").textContent = e.message; }
 }
 window.plData = async uuid => {
-  if (!uuid) { alert("Player needs a UUID (join the server once)"); return; }
+  if (!uuid) { toast("Player needs a UUID (join the server once)", "error"); return; }
   try { const j = await api("/api/players/data?uuid=" + encodeURIComponent(uuid)); $("#plData").innerHTML = "<pre>" + esc(JSON.stringify(j, null, 1).slice(0, 4000)) + "</pre>"; }
   catch (e) { $("#plData").textContent = e.message; }
 };
@@ -306,6 +342,7 @@ async function refreshInstBadges() {
     const p = await api("/api/catalog/installed?kind=plugin");
     $("#modInstBtn").textContent = "Installed mods (" + (m.installed || []).length + ")";
     $("#plgInstBtn").textContent = "Installed plugins (" + (p.installed || []).length + ")";
+    window._instFiles = { mod: (m.installed || []).map(x => x.file), plugin: (p.installed || []).map(x => x.file) };
   } catch (e) { /* server not selected yet */ }
 }
 async function loadInstModal() {
@@ -321,9 +358,22 @@ async function loadInstModal() {
   } catch (e) { $("#instList").textContent = e.message; }
 }
 window.uninst = async (kind, file) => {
-  if (!confirm("Uninstall " + file + "?")) return;
-  try { await api("/api/catalog/uninstall", { method: "POST", body: JSON.stringify({ kind, file, server_id: SID }) }); loadInstModal(); refreshInstBadges(); } catch (e) { alert(e.message); }
+  if (!(await ask("Uninstall " + file + "?"))) return;
+  try { await api("/api/catalog/uninstall", { method: "POST", body: JSON.stringify({ kind, file, server_id: SID }) }); loadInstModal(); refreshInstBadges(); toast("Removed " + file, "ok"); } catch (e) { toast(e.message, "error"); }
 };
+
+function isInstalled(src, id, kind, slug) {
+  const just = (window._justInstalled || {})[src + "/" + id];
+  if (just) return true;
+  const files = ((window._instFiles || {})[kind] || []).map(f => f.toLowerCase());
+  if (slug && files.some(f => f.includes(slug.toLowerCase()))) return true;
+  return false;
+}
+function instBtn(src, id, kind, slug) {
+  return isInstalled(src, id, kind, slug)
+    ? `<button class="act ok" id="ib-${kind}-${id}" disabled style="opacity:.55;cursor:default">Installed</button>`
+    : `<button class="act" id="ib-${kind}-${id}" onclick="inst('${esc(src)}','${esc(id)}','${kind}')">Install</button>`;
+}
 function openInstModal(kind) {
   instKind = kind;
   $("#instModalTitle").textContent = "Installed " + (kind === "mod" ? "Mods" : "Plugins");
@@ -346,17 +396,22 @@ async function search(into, src, q, kind) {
     const j = await api("/api/catalog/search?source=" + encodeURIComponent(src) + "&q=" + encodeURIComponent(q) + "&kind=" + kind + "&mc=" + encodeURIComponent(mc) + "&loader=" + encodeURIComponent(loader));
     const res = j.results || [];
     document.querySelector(into).innerHTML = res.length
-      ? res.map(r => `<div class="mod">${r.icon ? `<img src="${esc(r.icon)}">` : `<div class="mut" style="width:48px;height:48px;display:flex;align-items:center;justify-content:center">NA</div>`}<div><b>${esc(r.title)}</b><br><span class="mut">${esc((r.description || "").slice(0, 140))}</span><br><button class="act" onclick="inst('${esc(src)}','${esc(r.id)}','${kind}')">Install</button></div></div>`).join("")
+      ? res.map(r => `<div class="mod">${r.icon ? `<img src="${esc(r.icon)}">` : `<div class="mut" style="width:48px;height:48px;display:flex;align-items:center;justify-content:center">NA</div>`}<div><b>${esc(r.title)}</b><br><span class="mut">${esc((r.description || "").slice(0, 140))}</span><br>${instBtn(src, r.id, kind, r.slug || "")}</div></div>`).join("")
       : "No results.";
   } catch (e) { document.querySelector(into).textContent = e.message; }
 }
 window.inst = async (src, id, kind) => {
   try {
-    if (!CURSRV || !CURSRV.mc_version) { alert("Open the Server page first so we know the Minecraft version."); return; }
+    if (!CURSRV || !CURSRV.mc_version) { toast("Open the Server page first so the MC version is known.", "error"); return; }
+    toast("Installing latest for MC " + CURSRV.mc_version + "...", "info");
     const r = await api("/api/catalog/install", { method: "POST", body: JSON.stringify({ source: src, kind, project: id, mc: (CURSRV.mc_version || "").toString(), loader: (CURSRV.loader || "").toString(), server_id: SID }) });
-    alert("Installed - " + (r.note || r.file) + "\nRestart the server to load it.");
+    window._justInstalled = window._justInstalled || {};
+    window._justInstalled[src + "/" + id] = true;
+    const b = document.getElementById("ib-" + kind + "-" + id);
+    if (b) b.outerHTML = `<button class="act ok" id="ib-${kind}-${id}" disabled style="opacity:.55;cursor:default">Installed</button>`;
+    toast("Installed - " + (r.note || r.file) + ". Restart the server to load it.", "ok");
     refreshInstBadges();
-  } catch (e) { alert(e.message); }
+  } catch (e) { toast(e.message, "error"); }
 };
 $("#modGo").onclick = () => search("#modList", $("#modSrc").value, $("#modQ").value, "mod");
 $("#plgGo").onclick = () => search("#plgList", $("#plgSrc").value, $("#plgQ").value, "plugin");
@@ -376,24 +431,24 @@ async function loadFiles(p) {
 }
 window.openFolder = n => loadFiles(cur ? cur + "/" + n : n);
 window.dlFile = async n => { window.open("/api/files?path=" + encodeURIComponent(cur ? cur + "/" + n : n) + "&" + qs(), "_blank"); };
-window.delP = async n => { if (!confirm("Delete " + n + "?")) return; await api("/api/files/delete", { method: "POST", body: JSON.stringify({ path: cur ? cur + "/" + n : n, server_id: SID }) }); loadFiles(cur); };
+window.delP = async n => { if (!(await ask("Delete " + n + "?"))) return; await api("/api/files/delete", { method: "POST", body: JSON.stringify({ path: cur ? cur + "/" + n : n, server_id: SID }) }); loadFiles(cur); };
 $("#fUp").onclick = () => loadFiles(cur.split("/").slice(0, -1).join("/"));
-$("#fMk").onclick = async () => { const n = prompt("folder name"); if (n) { await api("/api/files/mkdir", { method: "POST", body: JSON.stringify({ path: cur ? cur + "/" + n : n, server_id: SID }) }); loadFiles(cur); } };
+$("#fMk").onclick = async () => { const n = await askText("New folder name"); if (n) { await api("/api/files/mkdir", { method: "POST", body: JSON.stringify({ path: cur ? cur + "/" + n : n, server_id: SID }) }); loadFiles(cur); } };
 $("#fFile").onchange = async e => { for (const f of e.target.files) { const fd = new FormData(); fd.append("file", f); await fetch("/api/files/upload?path=" + encodeURIComponent(cur) + "&" + qs(), { method: "POST", headers: { "x-token": TOKEN }, body: fd }); } loadFiles(cur); };
 
 // ---------- worlds ----------
 async function loadWorlds() { try { const j = await api("/api/worlds"); $("#wList").innerHTML = (j.worlds || []).map(w => `${esc(w.name)} (${(w.size / 1048576).toFixed(1)} MB)`).join("<br>") || "No world yet."; } catch (e) { $("#wList").textContent = e.message; } }
 $("#wDl").onclick = () => window.open("/api/worlds/download?name=" + encodeURIComponent($("#wName").value) + "&" + qs(), "_blank");
-$("#wUp").onchange = async e => { if (!confirm("Replace the old world with this zip?")) return; const fd = new FormData(); fd.append("file", e.target.files[0]); await fetch("/api/worlds/upload?" + qs(), { method: "POST", headers: { "x-token": TOKEN }, body: fd }); loadWorlds(); };
+$("#wUp").onchange = async e => { if (!(await ask("Replace the current world with this zip?"))) return; const fd = new FormData(); fd.append("file", e.target.files[0]); try { await fetch("/api/worlds/upload?" + qs(), { method: "POST", headers: { "x-token": TOKEN }, body: fd }); toast("World replaced.", "ok"); } catch (err) { toast(err.message, "error"); } loadWorlds(); };
 
 // ---------- backups / access ----------
 async function loadBk() { try { const j = await api("/api/backups"); const list = j.backups || []; $("#bkList").innerHTML = list.length ? list.map(b => `${esc(b.file)} <button class="act" onclick="restore('${esc(b.file)}')">Restore</button>`).join("<br>") : "No backups yet."; } catch (e) { $("#bkList").textContent = e.message; } }
-window.restore = async f => { if (confirm("Restore " + f + "?")) { await api("/api/backups/restore", { method: "POST", body: JSON.stringify({ file: f }) }); } };
-$("#bkGo").onclick = async () => { await api("/api/backups", { method: "POST", body: "{}" }); loadBk(); };
+window.restore = async f => { if (!(await ask("Restore backup " + f + "? The current files are overwritten."))) return; try { await api("/api/backups/restore", { method: "POST", body: JSON.stringify({ file: f }) }); toast("Restore done.", "ok"); } catch (e) { toast(e.message, "error"); } };
+$("#bkGo").onclick = async () => { try { await api("/api/backups", { method: "POST", body: "{}" }); toast("Backup created.", "ok"); } catch (e) { toast(e.message, "error"); } loadBk(); };
 $("#bkRef").onclick = loadBk;
 async function loadUsers() { try { const j = await api("/api/users"); $("#uList").innerHTML = (j.users || []).map(u => `${esc(u.username)} (${esc(u.role)}) <button class="act danger" onclick="delU('${esc(u.username)}')">Delete</button>`).join("<br>"); } catch (e) { $("#uList").textContent = e.message; } }
 window.delU = async n => { await api("/api/users/" + n, { method: "DELETE" }); loadUsers(); };
-$("#uAdd").onclick = async () => { try { await api("/api/users", { method: "POST", body: JSON.stringify({ username: $("#uName").value, password: $("#uPass").value, role: $("#uRole").value }) }); loadUsers(); } catch (e) { alert(e.message); } };
+$("#uAdd").onclick = async () => { try { await api("/api/users", { method: "POST", body: JSON.stringify({ username: $("#uName").value, password: $("#uPass").value, role: $("#uRole").value }) }); toast("User saved.", "ok"); loadUsers(); } catch (e) { toast(e.message, "error"); } };
 
 // ---------- boot ----------
 (async () => {

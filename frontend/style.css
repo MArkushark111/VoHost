@@ -20,3 +20,8 @@ button.act.mini{padding:3px 8px;font-size:12px}
 .overlay.hide{display:none}
 .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;width:100%;max-width:760px}
 .modal .row{flex-wrap:nowrap}.modal .row h3{margin:0}
+#toasts{position:fixed;top:14px;right:14px;z-index:99;display:flex;flex-direction:column;gap:8px;max-width:360px}
+.toast{background:#22304a;border:1px solid var(--line);border-left:4px solid var(--acc);color:var(--txt);padding:10px 14px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.35);animation:tin .25s ease}
+.toast.ok{border-left-color:var(--ok)}.toast.error{border-left-color:var(--red)}
+.toast.out{opacity:0;transform:translateX(12px);transition:opacity .3s,transform .3s}
+@keyframes tin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
