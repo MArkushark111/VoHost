@@ -42,7 +42,8 @@ DASH_PORT="$DASH_PORT" MC_PORT="$MC_PORT" bash "$DEST/scripts/firewall.sh" "$DAS
 sed "s/--port 8080/--port $DASH_PORT/" "$SRC_DIR/systemd/vohost-dashboard.service" > /etc/systemd/system/vohost-dashboard.service
 cp "$SRC_DIR/systemd/vohost-mc.service" /etc/systemd/system/vohost-mc.service
 ln -sf "$DEST/scripts/log-window.sh" /usr/local/bin/vohost-logs
-chmod +x /usr/local/bin/vohost-logs
+ln -sf "$DEST/scripts/vohost.sh" /usr/local/bin/vohost
+chmod +x /usr/local/bin/vohost-logs /usr/local/bin/vohost
 systemctl daemon-reload
 systemctl enable --now vohost-dashboard
 systemctl enable vohost-mc || true
@@ -57,7 +58,7 @@ echo "Dashboard : http://$IP:$DASH_PORT"
 echo "Admin     : admin / $ADMIN_PASS  (change in Access tab; saved in $DEST/data/.admin-pass)"
 echo "MC port   : $MC_PORT (UFW open; forward it on router for outside LAN)"
 echo "Services  : systemctl status vohost-dashboard vohost-mc"
-echo "Logs cmd  : vohost-logs   (press q to close window, server keeps running)"
+echo "Logs cmd  : vohost (or vohost-logs) — reopens window, press q to close, server keeps running"
 echo ""
 echo "Opening live log window (q to close)..."
 bash "$DEST/scripts/log-window.sh" || true

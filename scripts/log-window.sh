@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # VoHost log window — shows live logs, 'q' closes window only (services keep running via systemd).
-# Used at end of install.sh and via `vohost-logs` command.
+# Used at end of install.sh and via `vohost` / `vohost-logs` commands.
 set -uo pipefail
 echo "=== VoHost live logs (press 'q' to close window, server keeps running) ==="
 echo "Dashboard: http://$(hostname -I 2>/dev/null | awk '{print $1}'):8080"
