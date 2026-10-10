@@ -5,25 +5,43 @@ class RCONError(Exception):
     pass
 
 def rcon_command(host, port, password, command, timeout=5) -> str:
-    def pkt(req_id, typ, body):
-        b = body.encode("utf8") + b"\x00\x00"
-        return struct.pack("<iii", len(b) + 10 - 4, req_id, typ) + b if False else struct.pack("<i", 10 + len(body)) + struct.pack("<ii", req_id, typ) + body.encode() + b"\x00\x00"
-    # Build properly:
     def send(sock, rid, typ, body):
         payload = body.encode("utf8") + b"\x00\x00"
         sock.sendall(struct.pack("<iii", len(payload) + 8, rid, typ) + payload)
-    def recv(sock):
-        hdr = sock.recv(12)
-        if len(hdr) < 12:
-            raise RCONError("short read")
-        (length, rid, typ) = struct.unpack("<iii", hdr)
+    def read_body(sock, length):
         body = b""
         while len(body) < length - 8:
             chunk = sock.recv(length - 8 - len(body))
             if not chunk:
                 break
             body += chunk
-        sock.recv(2)  # trailing nulls (may already be consumed; ignore errors)
+        return body
+    def recv(sock):
+        hdr = sock.recv(12)
+        if len(hdr) < 12:
+            raise RCONError("short read")
+        (length, rid, typ) = struct.unpack("<iii", hdr)
+        body = read_body(sock, length)
+        sock.recv(2)  # trailing nulls
+        # large responses are often split across several packets with the same request id;
+        # drain them so the Console/list output isn't truncated
+        if length >= 4096:
+            try:
+                sock.settimeout(0.4)
+                while True:
+                    try:
+                        h2 = sock.recv(12)
+                    except socket.timeout:
+                        break
+                    if len(h2) < 12:
+                        break
+                    (l2, r2, _t2) = struct.unpack("<iii", h2)
+                    if r2 != rid:
+                        break
+                    body += read_body(sock, l2)
+                    sock.recv(2)
+            except Exception:
+                pass
         return rid, typ, body[:-2].decode("utf8", "replace") if len(body) >= 2 else body.decode("utf8", "replace")
     s = socket.create_connection((host, port), timeout=timeout)
     try:

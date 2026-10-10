@@ -72,6 +72,16 @@ check("public page html", r.status_code == 200 and sid in r.text, r.text[:80])
 r = c.get("/api/catalog/installed?server_id=" + sid)
 check("installed (update-aware)", r.status_code == 200 and "installed" in r.json(), r.text)
 
+# 4c. player profile + inventory editing endpoints
+r = c.get("/api/players/data?uuid=nobody-0000-0000-0000-000000000000&server_id=" + sid)
+check("player profile (missing player handled)", r.status_code == 200 and "error" in r.json(), r.text)
+r = c.post("/api/players/item/delete", json={})
+check("item delete guards", r.status_code == 400, r.text)
+r = c.post("/api/players/item/clear", json={"uuid": "nobody-0000-0000-0000-000000000000", "server_id": sid})
+check("item clear missing player 404", r.status_code == 404, r.text)
+r = c.put("/api/options", json={"server_id": sid, "props": {"keepInventory": "true", "enable-command-block": "true"}})
+check("keepInventory toggle saved", r.status_code == 200, r.text)
+
 r = c.get("/"); check("index page", r.status_code == 200 and "VoHost" in r.text, r.text[:100])
 r = c.get("/assets/app.js"); check("assets js", r.status_code == 200, r.text[:60])
 r = c.get("/assets/style.css"); check("assets css", r.status_code == 200, r.text[:40])

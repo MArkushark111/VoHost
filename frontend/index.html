@@ -177,4 +177,18 @@
   </div>
 </div>
 
+<!-- player profile: actions + inventory editor -->
+<div class="overlay hide" id="plModal">
+  <div class="modal">
+    <div class="row"><h3 id="plH">Player</h3><button class="act" id="plCl">Close</button></div>
+    <p class="mut" id="plU"></p>
+    <div class="row" id="plActs"></div>
+    <h4>Inventory <button class="act mini danger" id="plClearInv">Clear inventory</button></h4>
+    <div id="plInv" style="max-height:28vh;overflow:auto"></div>
+    <h4>Ender chest <button class="act mini danger" id="plClearEnd">Clear ender chest</button></h4>
+    <div id="plEnd" style="max-height:28vh;overflow:auto"></div>
+    <p class="mut" id="plNote">Item edits apply to the saved player file - do them while the player is offline. For online players use /clear &lt;name&gt; in the Console.</p>
+  </div>
+</div>
+
 <script src="/assets/app.js"></script></body></html>

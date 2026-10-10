@@ -15,6 +15,11 @@ DEFAULT_PROPS = {
     "pvp": "true",
     "online-mode": "true",
     "enforce-secure-profile": "true",
+    "keepInventory": "false",
+    "hardcore": "false",
+    "enable-command-block": "true",
+    "spawnMonsters": "true",
+    "spawnAnimals": "true",
     "enable-rcon": "true",
     "rcon.port": "25575",
     "rcon.password": "vohost-rcon",
@@ -26,7 +31,8 @@ DEFAULT_PROPS = {
 }
 
 TOGGLES = ["white-list", "allow-flight", "force-gamemode", "pvp", "online-mode", "enforce-secure-profile",
-           "enable-rcon", "require-resource-pack", "enable-whitelist"]
+           "enable-rcon", "require-resource-pack", "enable-whitelist", "keepInventory", "hardcore",
+           "enable-command-block", "spawnMonsters", "spawnAnimals"]
 
 def _dir(sdir=None) -> Path:
     return Path(sdir) if sdir else SERVER_DIR

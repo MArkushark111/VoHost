@@ -852,7 +852,40 @@ def p_seen(req: Request, server_id: str = ""):
 def p_data(req: Request, uuid: str, server_id: str = ""):
     need(req, "moderator")
     _, sdir = resolve(req, server_id)
-    return NP.read_inventory(uuid, sdir)
+    return NP.read_profile(uuid, sdir)
+
+@app.post("/api/players/item/delete")
+def p_item_delete(req: Request, body: dict):
+    need(req, "moderator")
+    _, sdir = resolve(req, body.get("server_id", ""))
+    uuid, slot = str(body.get("uuid", "")), body.get("slot")
+    which = str(body.get("list", "Inventory"))
+    if not uuid or slot is None:
+        raise HTTPException(400, "uuid+slot required")
+    try:
+        r = NP.delete_slot(uuid, slot, sdir, which=which)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"delete failed: {e}")
+    return {**r, "note": "Removed from the saved player file. The player must be offline for it to stick; while online use /clear <name> in the Console."}
+
+@app.post("/api/players/item/clear")
+def p_item_clear(req: Request, body: dict):
+    need(req, "moderator")
+    _, sdir = resolve(req, body.get("server_id", ""))
+    uuid, ender = str(body.get("uuid", "")), bool(body.get("ender"))
+    if not uuid:
+        raise HTTPException(400, "uuid required")
+    try:
+        r = NP.clear_inv(uuid, sdir, ender=ender)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"clear failed: {e}")
+    return {**r, "note": "Cleared in the saved player file (player should be offline)."}
 
 @app.get("/api/players/lists")
 def p_lists(req: Request, server_id: str = ""):

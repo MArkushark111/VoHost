@@ -306,7 +306,8 @@ async function loadOpts() {
       const cur = o.props[k] || drops[k][0][0];
       f.innerHTML += `<label>${esc(k)}</label><select data-k="${k}">` + drops[k].map(([v, l]) => `<option value="${v}" ${cur === v ? "selected" : ""}>${l}</option>`).join("") + `</select>`;
     });
-    const toggles = ["white-list", "allow-flight", "force-gamemode", "pvp", "enable-rcon", "require-resource-pack"];
+    const toggles = ["white-list", "allow-flight", "force-gamemode", "pvp", "enable-rcon", "require-resource-pack",
+      "keepInventory", "hardcore", "enable-command-block", "spawnMonsters", "spawnAnimals"];
     toggles.forEach(k => {
       const on = (o.props[k] || "false") === "true";
       f.innerHTML += `<div class="tgl"><span>${esc(k)}</span><input type="checkbox" data-k="${k}" style="width:auto" ${on ? "checked" : ""}></div>`;
@@ -415,15 +416,73 @@ async function loadSeen() {
     $("#plSeen").innerHTML = ps.slice(0, 40).map(p => {
       const label = p.name || p.uuid || "?";
       const uuid = p.uuid || "";
-      return `<button class="act" onclick="plData('${esc(uuid)}')">${esc(label)} (inventory)</button> `;
+      const tag = p["ops.json"] ? " OP" : (p["whitelist.json"] ? " whitelisted" : "");
+      return `<button class="act" onclick="plProfile('${esc(label)}','${esc(uuid)}')">${esc(label)}${tag ? `<span class="badge">${tag.trim()}</span>` : ""} - view</button> `;
     }).join("");
   } catch (e) { $("#plSeen").textContent = e.message; }
 }
-window.plData = async uuid => {
+window._plCur = { name: "", uuid: "" };
+window.plProfile = async (name, uuid) => {
   if (!uuid) { toast("Player needs a UUID (join the server once)", "error"); return; }
-  try { const j = await api("/api/players/data?uuid=" + encodeURIComponent(uuid)); $("#plData").innerHTML = "<pre>" + esc(JSON.stringify(j, null, 1).slice(0, 4000)) + "</pre>"; }
-  catch (e) { $("#plData").textContent = e.message; }
+  window._plCur = { name: name || "", uuid };
+  $("#plModal").classList.remove("hide");
+  $("#plH").textContent = name || uuid;
+  $("#plU").textContent = "UUID: " + uuid + " - name from the saved player file.";
+  await plRefreshInv();
 };
+async function plRefreshInv() {
+  const { uuid } = window._plCur;
+  try {
+    const j = await api("/api/players/data?uuid=" + encodeURIComponent(uuid));
+    if (!j.uuid) { $("#plInv").textContent = j.error || "no data"; $("#plEnd").innerHTML = ""; return; }
+    if (j.name && !window._plCur.name) { window._plCur.name = j.name; $("#plH").textContent = j.name; }
+    const row = (it, lst) => `${esc(it.id)} <span class="mut">x${it.Count} slot ${it.Slot}</span> <button class="act mini danger" onclick="plDelItem(${it.Slot},'${lst}')">Delete</button>`;
+    $("#plInv").innerHTML = (j.Inventory && j.Inventory.length)
+      ? j.Inventory.map(it => row(it, "Inventory")).join("<br>") : '<span class="mut">empty</span>';
+    $("#plEnd").innerHTML = (j.EnderItems && j.EnderItems.length)
+      ? j.EnderItems.map(it => row(it, "EnderItems")).join("<br>") : '<span class="mut">empty</span>';
+  } catch (e) { $("#plInv").textContent = e.message; }
+}
+window.plDelItem = async (slot, lst) => {
+  if (!(await ask("Delete the item in slot " + slot + (lst === "EnderItems" ? " (ender chest)" : "") + "?"))) return;
+  const u = window._plCur.uuid;
+  try { const r = await api("/api/players/item/delete", { method: "POST", body: JSON.stringify({ uuid: u, slot, list: lst, server_id: SID }) }); toast(r.note || "Deleted.", "ok"); }
+  catch (e) { toast(e.message, "error"); }
+  plRefreshInv();
+};
+const plActs = [
+  ["op", "OP"], ["deop", "De-OP"], ["kick", "Kick"], ["ban", "Ban"],
+  ["tempban", "Temp ban"], ["pardon", "Unban"], ["kill", "Kill"], ["feed", "Feed"]
+];
+$("#plActs").innerHTML = plActs.map(([a, l]) => `<button class="act" data-a="${a}">${l}</button>`).join("");
+document.querySelectorAll("#plActs [data-a]").forEach(b => b.onclick = async () => {
+  const { name } = window._plCur;
+  if (!name) return toast("Unknown player name - cannot run commands.", "error");
+  const body = { name, action: b.dataset.a, server_id: SID };
+  if (b.dataset.a === "kick") { const r = await askText("Kick reason", "kicked by VoHost"); if (r === null) return; body.reason = r; }
+  if (b.dataset.a === "ban" || b.dataset.a === "tempban") { const r = await askText("Ban reason", "banned by VoHost"); if (r === null) return; body.reason = r; }
+  if (b.dataset.a === "tempban") { const d = await askText("Duration (e.g. 7d / 2h / forever)", "7d"); if (!d) return; body.duration = d; }
+  try {
+    const r = await api("/api/players/action", { method: "POST", body: JSON.stringify(body) });
+    if (r.ok) toast(r.out ? (b.dataset.a.toUpperCase() + ": " + r.out) : (b.dataset.a + " done"), "ok");
+    else toast(r.error || (b.dataset.a + " failed"), "error");
+  } catch (e) { toast(e.message, "error"); }
+});
+$("#plClearInv").onclick = async () => {
+  if (!(await ask("Clear the entire saved inventory of " + (window._plCur.name || window._plCur.uuid) + "?"))) return;
+  try { const r = await api("/api/players/item/clear", { method: "POST", body: JSON.stringify({ uuid: window._plCur.uuid, ender: false, server_id: SID }) }); toast(r.note || "Cleared.", "ok"); }
+  catch (e) { toast(e.message, "error"); }
+  plRefreshInv();
+};
+$("#plClearEnd").onclick = async () => {
+  if (!(await ask("Clear the entire saved ender chest?"))) return;
+  try { const r = await api("/api/players/item/clear", { method: "POST", body: JSON.stringify({ uuid: window._plCur.uuid, ender: true, server_id: SID }) }); toast(r.note || "Cleared.", "ok"); }
+  catch (e) { toast(e.message, "error"); }
+  plRefreshInv();
+};
+$("#plCl").onclick = () => $("#plModal").classList.add("hide");
+$("#plModal").onclick = e => { if (e.target.id === "plModal") $("#plModal").classList.add("hide"); };
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("#plModal").classList.add("hide"); });
 
 // ---------- software ----------
 async function loadSw() {
