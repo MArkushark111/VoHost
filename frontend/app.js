@@ -119,7 +119,16 @@ async function loadStatus() {
   } catch (e) { if (e.status === 401) { $("#mOn").textContent = "login required"; } }
 }
 function drawGraph() { const c = $("#graph"); if (!c) return; const g = c.getContext("2d"); g.clearRect(0, 0, 900, 120); g.strokeStyle = "#3fa7ff"; g.beginPath(); hist.forEach((v, i) => { const x = i * 15, y = 120 - v * 1.2; i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke(); }
-document.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => { try { await api("/api/server/" + b.dataset.a, { method: "POST", body: "{}" }); setTimeout(loadStatus, 1500); } catch (e) { alert(e.message); } });
+document.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
+  try {
+    const r = await api("/api/server/" + b.dataset.a, { method: "POST", body: "{}" });
+    if (r && r.crashed) {
+      $("#term").innerHTML += "\n" + ansi("[crash] Server exited immediately - reason:\n" + (r.note || "")) + "\n";
+      show("console");
+    }
+    setTimeout(loadStatus, 1500);
+  } catch (e) { alert(e.message); }
+});
 $("#btnEula").onclick = async () => { await api("/api/eula", { method: "POST", body: JSON.stringify({ accept: true }) }); alert("EULA accepted"); };
 $("#netGo").onclick = async () => { await api("/api/servers/" + SID, { method: "PUT", body: JSON.stringify({ network_mode: $("#netSel").value }) }); loadStatus(); };
 setInterval(() => { if (!document.querySelector("[data-s='server']").classList.contains("hide")) loadStatus(); }, 4000);

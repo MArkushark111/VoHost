@@ -54,6 +54,9 @@ echo "[6/8] restart dashboard"
 systemctl daemon-reload
 systemctl enable vohost-dashboard >/dev/null 2>&1 || true
 systemctl restart vohost-dashboard
+# clear any crash-loop lockout on minecraft units so they can start again after the fix
+for u in $(systemctl list-units --type=service --all --no-legend 'vohost-mc@*' 2>/dev/null | awk '{print $1}'); do systemctl reset-failed "$u" >/dev/null 2>&1 || true; done
+systemctl reset-failed vohost-mc >/dev/null 2>&1 || true
 sleep 4
 systemctl is-active vohost-dashboard
 

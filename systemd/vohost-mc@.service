@@ -1,6 +1,8 @@
 [Unit]
 Description=VoHost Minecraft Server %i
 After=network.target vohost-dashboard.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 [Service]
 Type=simple
 User=root

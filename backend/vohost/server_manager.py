@@ -36,7 +36,8 @@ def _ctx(server_id: str = "", server: dict | None = None):
 def service_active(server_id: str = "", server: dict | None = None) -> bool:
     sdir, unit, _ = _ctx(server_id, server)
     r = _run(["systemctl", "is-active", unit])
-    if r.returncode == 0 and "active" in r.stdout:
+    # exact match: "activating" also contains "active" and must NOT count as online
+    if r.returncode == 0 and r.stdout.strip() in ("active", "reloading"):
         return True
     for p in psutil.process_iter(["cmdline"]):
         try:
@@ -49,10 +50,22 @@ def service_active(server_id: str = "", server: dict | None = None) -> bool:
 
 def action(act: str, server_id: str = "", server: dict | None = None) -> dict:
     _, unit, _ = _ctx(server_id, server)
-    if act in ("start", "stop", "restart"):
+    if act in ("start", "restart"):
         r = _run(["sudo", "-n", "systemctl", act, unit])
         if r.returncode != 0:
             r = _run(["systemctl", act, unit])
+        res = {"ok": r.returncode == 0, "unit": unit, "out": (r.stdout + r.stderr)[-2000:]}
+        # if the process dies right away, surface the reason instead of pretending it started
+        time.sleep(6)
+        if not service_active(server_id, server):
+            res["ok"] = False
+            res["crashed"] = True
+            res["note"] = "Server exited right after start. Last log lines:\n" + tail_log(50, server_id, server)[-2500:]
+        return res
+    if act == "stop":
+        r = _run(["sudo", "-n", "systemctl", "stop", unit])
+        if r.returncode != 0:
+            r = _run(["systemctl", "stop", unit])
         return {"ok": r.returncode == 0, "unit": unit, "out": (r.stdout + r.stderr)[-2000:]}
     if act == "kill":
         sdir, _, _ = _ctx(server_id, server)
@@ -95,13 +108,25 @@ def send_command(cmd: str, server_id: str = "", server: dict | None = None) -> d
 
 def tail_log(lines=200, server_id: str = "", server: dict | None = None) -> str:
     sdir, unit, _ = _ctx(server_id, server)
-    for cand in (sdir / "logs" / "latest.log", LOGS / "mc.log"):
-        if cand.exists():
-            try:
-                data = cand.read_text(errors="replace").splitlines()
-                return "\n".join(data[-lines:])
-            except Exception:
-                pass
+    # MC's own log first, then the systemd stdout log for this specific server (mc-<id>.log)
+    cands = [sdir / "logs" / "latest.log", LOGS / "mc.log"]
+    if server_id and server_id != "main":
+        cands.append(LOGS / f"mc-{server_id}.log")
+    best = None
+    for c in cands:
+        try:
+            if c.exists():
+                m = c.stat().st_mtime
+                if best is None or m > best[1]:
+                    best = (c, m)
+        except Exception:
+            pass
+    if best:
+        try:
+            data = best[0].read_text(errors="replace").splitlines()
+            return "\n".join(data[-lines:])
+        except Exception:
+            pass
     r = _run(["journalctl", "-u", unit, "-n", str(lines), "--no-pager", "--no-hostname", "-o", "cat"])
     return r.stdout[-20000:] if r.returncode == 0 else "(no logs yet — start the server)"
 

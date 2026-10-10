@@ -283,16 +283,20 @@ def sw_install(req: Request, body: dict):
     note = f"recorded {loader} {mc} build={lv} on {(srv or {}).get('name', sid)}."
     hook_ok = False
     if hook.exists():
-        env = dict(os.environ, VOHOST_SERVER_DIR=str(sdir))
+        env = dict(os.environ, VOHOST_SERVER_DIR=str(sdir), VOHOST_SERVER_ID=sid,
+                   VOHOST_BASE=str(BASE.parent if (BASE.parent / "data").exists() else BASE))
         r = subprocess.run(["bash", str(hook), loader, mc, lv], capture_output=True, text=True, timeout=600, env=env)
         note += "\n" + (r.stdout + r.stderr)[-4000:]
-        hook_ok = r.returncode == 0 and ("OK" in r.stdout or "installed" in r.stdout)
+        hook_ok = r.returncode == 0 and (sdir / "server.jar").exists()
     else:
         note += " (no install-server.sh hook — set jar manually in Files/server.jar)."
+    if not (sdir / "server.jar").exists():
+        note += "\nWARNING: server.jar is missing in the server folder - the server will crash on start until a jar is present."
+    # EULA: write the file even if it does not exist yet (fresh server folders have none)
     try:
-        eula = sdir / "eula.txt"
-        if body.get("accept_eula") and eula.exists():
-            eula.write_text(eula.read_text().replace("eula=false", "eula=true"))
+        if body.get("accept_eula"):
+            (sdir / "eula.txt").write_text("eula=true\n")
+            note += "\nEULA accepted (eula.txt written)."
     except Exception:
         pass
     if srv:
