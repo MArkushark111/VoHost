@@ -8,7 +8,10 @@ from .rcon import rcon_command
 LEGACY_UNIT = "vohost-mc"
 
 def _run(*a, **k):
-    return subprocess.run(*a, capture_output=True, text=True, **k)
+    try:
+        return subprocess.run(*a, capture_output=True, text=True, **k)
+    except FileNotFoundError:
+        return type("R", (), {"returncode": 127, "stdout": "", "stderr": "systemctl not available"})()
 
 def _ctx(server_id: str = "", server: dict | None = None):
     """Resolve unit + dir + rcon for a server. server_id='' means default/legacy."""

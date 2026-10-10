@@ -65,8 +65,8 @@ def setup_needed() -> bool:
 def setup_state():
     return {"needs_setup": setup_needed(), "has_users": not setup_needed()}
 
-@app.post("/api/setup")
-def do_setup(body: dict, response: JSONResponse | None = None):
+@app.post("/api/setup", response_model=None)
+def do_setup(body: dict):
     """Create the FIRST user (admin). Rejected once any user exists."""
     if not setup_needed():
         raise HTTPException(403, "setup already done — a user exists. Reset via data/.admin-pass + restart.")
@@ -619,7 +619,7 @@ if FRONT.exists():
 def index():
     idx = FRONT / "index.html"
     if idx.exists():
-        return idx.read_text()
+        return HTMLResponse(idx.read_bytes().decode("utf-8", "replace"))
     return "<h1>VoHost</h1><p>frontend/ missing</p>"
 
 def ensure_admin_at_boot():

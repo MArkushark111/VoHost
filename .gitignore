@@ -14,3 +14,4 @@ data/.admin-pass
 # OS
 .DS_Store
 Thumbs.db
+.venv-test/
