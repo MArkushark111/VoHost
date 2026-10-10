@@ -86,10 +86,8 @@ sleep 3
 if curl -fs "http://127.0.0.1:$DASH_PORT/" >/dev/null 2>&1; then
   echo "[VoHost] dashboard OK on :$DASH_PORT"
 else
-  echo "[VoHost] WARN: dashboard not answering on :$DASH_PORT — check below:"
-  systemctl status vohost-dashboard --no-pager -n 5 || true
-  journalctl -u vohost-dashboard -n 30 --no-pager --no-hostname -o cat || true
-  ss -tlnp 2>/dev/null | grep "$DASH_PORT" || echo "(nothing listening on $DASH_PORT)"
+  echo "[VoHost] WARN: dashboard not answering on :$DASH_PORT — running doctor:"
+  bash "$DEST/scripts/doctor.sh" "$DASH_PORT" || journalctl -u vohost-dashboard -n 30 --no-pager --no-hostname -o cat || true
 fi
 
 # timezone default
