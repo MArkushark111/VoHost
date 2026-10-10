@@ -153,17 +153,26 @@ async function loadOpts() {
     const o = await api("/api/options");
     const f = $("#optForm"); f.innerHTML = "";
     const inputs = [["server-name", "text", ""], ["motd", "text", ""], ["max-players", "number", ""],
-      ["gamemode", "text", "survival / creative / adventure / spectator"],
-      ["difficulty", "text", "peaceful / easy / normal / hard"], ["spawn-protection", "number", ""],
+      ["spawn-protection", "number", ""],
       ["server-port", "number", ""], ["resource-pack", "text", "https://...zip"], ["resource-pack-prompt", "text", "optional text"]];
     inputs.forEach(([k, type, ph]) => {
       f.innerHTML += `<label>${esc(k)}</label><input type="${type}" data-k="${k}" placeholder="${esc(ph)}" value="${esc(o.props[k] || "")}">`;
     });
-    const toggles = ["white-list", "allow-flight", "force-gamemode", "pvp", "online-mode", "enable-rcon", "require-resource-pack"];
+    const drops = {
+      gamemode: [["survival", "Survival"], ["creative", "Creative"], ["adventure", "Adventure"], ["spectator", "Spectator"]],
+      difficulty: [["peaceful", "Peaceful"], ["easy", "Easy"], ["normal", "Normal"], ["hard", "Hard"]]
+    };
+    Object.keys(drops).forEach(k => {
+      const cur = o.props[k] || drops[k][0][0];
+      f.innerHTML += `<label>${esc(k)}</label><select data-k="${k}">` + drops[k].map(([v, l]) => `<option value="${v}" ${cur === v ? "selected" : ""}>${l}</option>`).join("") + `</select>`;
+    });
+    const toggles = ["white-list", "allow-flight", "force-gamemode", "pvp", "enable-rcon", "require-resource-pack"];
     toggles.forEach(k => {
       const on = (o.props[k] || "false") === "true";
       f.innerHTML += `<div class="tgl"><span>${esc(k)}</span><input type="checkbox" data-k="${k}" style="width:auto" ${on ? "checked" : ""}></div>`;
     });
+    const cracked = (o.props["online-mode"] || "true") === "false";
+    f.innerHTML += `<div class="tgl" style="border:1px solid var(--warn,#c9a227);border-radius:8px;padding:8px"><span><b>Cracked mode</b> (allow TLauncher / unofficial clients) <span class="mut">- sets online-mode=false + enforce-secure-profile=false so cracked and official (Minecraft) clients join the same server</span></span><input type="checkbox" data-k="cracked-mode" style="width:auto" ${cracked ? "checked" : ""}></div>`;
     f.innerHTML += `<label>Network (WAN public / LAN only)</label><select data-k="_network_mode"><option value="wan" ${o.network_mode === "wan" ? "selected" : ""}>WAN - public</option><option value="lan" ${o.network_mode === "lan" ? "selected" : ""}>LAN - home only</option></select>`;
     $("#optTz").value = o.timezone || "UTC"; $("#optEnv").value = o.env || "";
     window._iconB64 = "";
@@ -186,6 +195,11 @@ $("#optIconUp").onclick = async () => {
 $("#optSave").onclick = async () => {
   const props = {};
   document.querySelectorAll("#optForm [data-k]").forEach(el => { props[el.dataset.k] = el.type === "checkbox" ? String(el.checked) : el.value; });
+  const cracked = props["cracked-mode"] === "true";
+  delete props["cracked-mode"];
+  if ("online-mode" in props) delete props["online-mode"];
+  props["online-mode"] = cracked ? "false" : "true";
+  props["enforce-secure-profile"] = cracked ? "false" : "true";
   try {
     await api("/api/options", { method: "PUT", body: JSON.stringify({ props, server_id: SID, timezone: $("#optTz").value, env: $("#optEnv").value, icon_b64: window._iconB64 || undefined, curseforge_api_key: $("#optCF").value || undefined, discord_webhook: $("#optDiscord").value || undefined }) });
     alert("Saved. Restart the server to apply.");

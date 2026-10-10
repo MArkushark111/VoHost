@@ -14,6 +14,7 @@ DEFAULT_PROPS = {
     "spawn-protection": "16",
     "pvp": "true",
     "online-mode": "true",
+    "enforce-secure-profile": "true",
     "enable-rcon": "true",
     "rcon.port": "25575",
     "rcon.password": "vohost-rcon",
@@ -24,7 +25,7 @@ DEFAULT_PROPS = {
     "resource-pack-prompt": "",
 }
 
-TOGGLES = ["white-list", "allow-flight", "force-gamemode", "pvp", "online-mode",
+TOGGLES = ["white-list", "allow-flight", "force-gamemode", "pvp", "online-mode", "enforce-secure-profile",
            "enable-rcon", "require-resource-pack", "enable-whitelist"]
 
 def _dir(sdir=None) -> Path:
