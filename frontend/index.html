@@ -98,7 +98,7 @@
 
 <section class="card hide" data-s="mods">
   <h2>Mods</h2>
-  <h3>Installed</h3><div id="modInst"></div><button class="act" id="modRef">Refresh installed</button>
+  <div class="row"><button class="act" id="modInstBtn">Installed mods (0)</button><span class="mut">hint: installs go to the mods folder; restart the server to load them</span></div>
   <h3>Browse Modrinth / CurseForge</h3>
   <div class="row"><select id="modSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="modQ" placeholder="search a mod e.g. sodium"><button class="act" id="modGo">Search</button></div>
   <div id="modList"></div>
@@ -106,7 +106,7 @@
 
 <section class="card hide" data-s="plugins">
   <h2>Plugins</h2>
-  <h3>Installed</h3><div id="plgInst"></div><button class="act" id="plgRef">Refresh installed</button>
+  <div class="row"><button class="act" id="plgInstBtn">Installed plugins (0)</button><span class="mut">hint: installs go to the plugins folder; restart the server to load them</span></div>
   <h3>Browse Modrinth / CurseForge</h3>
   <div class="row"><select id="plgSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="plgQ" placeholder="search a plugin e.g. Essentials"><button class="act" id="plgGo">Search</button></div>
   <div id="plgList"></div>
@@ -135,4 +135,15 @@
 </section>
 
 </main>
+
+<!-- installed mods/plugins modal -->
+<div class="overlay hide" id="instModal">
+  <div class="modal">
+    <div class="row"><h3 id="instModalTitle">Installed Mods</h3><button class="act" id="instClose">Close</button></div>
+    <div class="row"><input id="instFilter" placeholder="filter by file name"><button class="act" id="instRef">Refresh</button></div>
+    <p class="mut" id="instCount"></p>
+    <div id="instList" style="max-height:50vh;overflow:auto"></div>
+  </div>
+</div>
+
 <script src="/assets/app.js"></script></body></html>

@@ -29,8 +29,7 @@ function show(tab) {
   document.querySelectorAll("main section").forEach(sec => sec.classList.toggle("hide", sec.dataset.s !== tab));
   ({
     servers: loadServers, server: loadStatus, options: loadOpts, console: nop,
-    log: loadLog, players: loadPlayers, software: loadSw, mods: () => loadInstalled("mod"),
-    plugins: () => loadInstalled("plugin"), files: () => loadFiles(cur), worlds: loadWorlds,
+    log: loadLog, players: loadPlayers, software: loadSw, mods: () => refreshInstBadges(), plugins: () => refreshInstBadges(), files: () => loadFiles(cur), worlds: loadWorlds,
     backups: loadBk, access: loadUsers
   }[tab] || nop)();
 }
@@ -299,26 +298,46 @@ $("#swInstall").onclick = async () => {
 };
 
 // ---------- mods / plugins ----------
-async function loadInstalled(kind) {
-  const into = kind === "mod" ? "#modInst" : "#plgInst";
+let instKind = "mod";
+async function refreshInstBadges() {
+  if (!SID) return;
   try {
-    const j = await api("/api/catalog/installed?kind=" + kind);
+    const m = await api("/api/catalog/installed?kind=mod");
+    const p = await api("/api/catalog/installed?kind=plugin");
+    $("#modInstBtn").textContent = "Installed mods (" + (m.installed || []).length + ")";
+    $("#plgInstBtn").textContent = "Installed plugins (" + (p.installed || []).length + ")";
+  } catch (e) { /* server not selected yet */ }
+}
+async function loadInstModal() {
+  try {
+    const j = await api("/api/catalog/installed?kind=" + instKind);
     const list = j.installed || [];
-    document.querySelector(into).innerHTML = list.length
-      ? list.map(m => `<div class="mod"><div><b>${esc(m.file)}</b> <span class="mut">${(m.size / 1024).toFixed(0)} KB</span> <button class="act danger" onclick="uninst('${kind}','${esc(m.file)}')">Uninstall</button></div></div>`).join("")
-      : "Nothing installed yet.";
-  } catch (e) { document.querySelector(into).textContent = e.message; }
+    $("#instCount").textContent = list.length + " installed in the " + (instKind === "mod" ? "mods" : "plugins") + " folder";
+    const f = ($("#instFilter").value || "").toLowerCase();
+    const rows = list.filter(m => !f || m.file.toLowerCase().includes(f));
+    $("#instList").innerHTML = rows.length
+      ? rows.map(m => `<div class="mod"><div><b>${esc(m.file)}</b> <span class="mut">${(m.size / 1048576).toFixed(2)} MB</span></div><div><button class="act danger" onclick="uninst('${instKind}','${esc(m.file)}')">Uninstall</button></div></div>`).join("")
+      : (f ? "No installed " + (instKind === "mod" ? "mods" : "plugins") + " match that filter." : "Nothing installed yet.");
+  } catch (e) { $("#instList").textContent = e.message; }
 }
 window.uninst = async (kind, file) => {
   if (!confirm("Uninstall " + file + "?")) return;
-  try { await api("/api/catalog/uninstall", { method: "POST", body: JSON.stringify({ kind, file, server_id: SID }) }); loadInstalled(kind); } catch (e) { alert(e.message); }
+  try { await api("/api/catalog/uninstall", { method: "POST", body: JSON.stringify({ kind, file, server_id: SID }) }); loadInstModal(); refreshInstBadges(); } catch (e) { alert(e.message); }
 };
-$("#modRef").onclick = () => loadInstalled("mod");
-$("#plgRef").onclick = () => loadInstalled("plugin");
+function openInstModal(kind) {
+  instKind = kind;
+  $("#instModalTitle").textContent = "Installed " + (kind === "mod" ? "Mods" : "Plugins");
+  $("#instFilter").value = "";
+  $("#instModal").classList.remove("hide");
+  loadInstModal();
+}
+$("#modInstBtn").onclick = () => openInstModal("mod");
+$("#plgInstBtn").onclick = () => openInstModal("plugin");
+$("#instClose").onclick = () => $("#instModal").classList.add("hide");
+$("#instRef").onclick = loadInstModal;
+$("#instFilter").oninput = loadInstModal;
+$("#instModal").onclick = e => { if (e.target.id === "instModal") $("#instModal").classList.add("hide"); };
 
-const AF = (env, q) => {
-  // helper for catalog search
-};
 async function search(into, src, q, kind) {
   try {
     const loader = (CURSRV && CURSRV.loader) || "";
@@ -335,7 +354,7 @@ window.inst = async (src, id, kind) => {
     if (!CURSRV || !CURSRV.mc_version) { alert("Open the Server page first so we know the Minecraft version."); return; }
     const r = await api("/api/catalog/install", { method: "POST", body: JSON.stringify({ source: src, kind, project: id, mc: (CURSRV.mc_version || "").toString(), loader: (CURSRV.loader || "").toString(), server_id: SID }) });
     alert("Installed - " + (r.note || r.file) + "\nRestart the server to load it.");
-    loadInstalled(kind);
+    refreshInstBadges();
   } catch (e) { alert(e.message); }
 };
 $("#modGo").onclick = () => search("#modList", $("#modSrc").value, $("#modQ").value, "mod");
