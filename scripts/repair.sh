@@ -74,7 +74,12 @@ if curl -fs "http://127.0.0.1:$PORT/" >/dev/null 2>&1; then
       echo "LOGIN TEST: admin / \$data/.admin-pass  ->  LOGIN OK"
     else
       echo "LOGIN TEST FAILED (HTTP $CODE): $(cat /tmp/vh-login.json 2>/dev/null)"
-      echo "journal check:"; journalctl -u vohost-dashboard -n 5 --no-pager --no-hostname -o cat | grep -i "admin password synced" || echo "  (sync line missing = old dashboard code still running — restart again or re-run repair)"
+      echo "journal check:"; journalctl -u vohost-dashboard -n 5 --no-pager --no-hostname -o cat | grep -i "admin password" || echo "  (sync line missing = old dashboard code still running — re-run repair once more)"
+      echo ""
+      echo "FIX (wipes accounts so the Web UI shows 'Create admin' first-run):"
+      echo "  sudo rm -f /opt/vohost/data/users.json /opt/vohost/data/.admin-pass"
+      echo "  sudo systemctl restart vohost-dashboard"
+      echo "  -> open dashboard, prompt asks for new admin username+password"
     fi
   else
     echo "WARN: data/.admin-pass empty/missing — set it:  echo 'YOURPASS' | sudo tee /opt/vohost/data/.admin-pass && sudo systemctl restart vohost-dashboard"
