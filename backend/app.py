@@ -1,4 +1,4 @@
-"""VoHost dashboard backend — FastAPI, serves frontend/, WS console with ANSI colors."""
+"""VoHost dashboard backend — FastAPI, multi-server, WAN/LAN, installed mods + uninstall."""
 import os, json, shutil, zipfile, base64, time, subprocess
 from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
@@ -13,6 +13,7 @@ from vohost import server_manager as SM
 from vohost import options_manager as OM
 from vohost import nbt_players as NP
 from vohost import backups_sched as BK
+from vohost import servers as SV
 
 FRONT = Path(__file__).resolve().parents[1] / ".." / "frontend"
 FRONT = FRONT.resolve()
@@ -28,6 +29,24 @@ def need(req: Request, minimum="viewer"):
     if not A.require_role(u, minimum):
         raise HTTPException(401 if not u else 403, "login required / insufficient role")
     return u
+
+def resolve(req: Request, server_id: str = ""):
+    """Return (server_dict_or_None, sdir). Falls back to legacy single dir."""
+    sid = server_id or req.query_params.get("server_id", "") or ""
+    try:
+        lst = SV.list_servers()
+    except Exception:
+        lst = []
+    if not lst:
+        return None, SERVER_DIR
+    if not sid:
+        s = lst[0]
+        return s, Path(s.get("dir", str(SERVER_DIR)))
+    try:
+        s = SV.get_server(sid)
+        return s, Path(s.get("dir", str(SERVER_DIR)))
+    except KeyError:
+        raise HTTPException(404, f"server {sid} not found")
 
 def safe_join(base: Path, rel: str) -> Path:
     p = (base / (rel or "")).resolve()
@@ -73,49 +92,96 @@ def deluser(req: Request, name: str):
     A.delete_user(name)
     return {"ok": True}
 
-# ---------- server ----------
-@app.get("/api/status")
-def status(req: Request):
+# ---------- servers (multi) ----------
+@app.get("/api/servers")
+def srv_list(req: Request):
     need(req, "viewer")
-    m = SM.metrics()
-    props = OM.read_props()
+    out = []
+    for s in SV.list_servers():
+        try:
+            on = SM.service_active(server=s)
+        except Exception:
+            on = False
+        out.append({**s, "online": on})
+    return {"servers": out}
+
+@app.post("/api/servers")
+def srv_create(req: Request, body: dict):
+    need(req, "admin")
+    s = SV.create_server(body.get("name", "server"),
+                         body.get("network_mode", "wan"),
+                         body.get("port"), body.get("memory_max", "4G"),
+                         body.get("loader", "vanilla"), body.get("mc_version", "latest"))
+    return {"ok": True, "server": s,
+            "note": f"{s['name']} on port {s['port']} ({s['network_mode'].upper()} — {'public, forward port on router' if s['network_mode']=='wan' else 'LAN only, UFW restricted to 192.168/10/172.16'})"}
+
+@app.put("/api/servers/{sid}")
+def srv_update(req: Request, sid: str, body: dict):
+    need(req, "admin")
+    return {"ok": True, "server": SV.update_server(sid, body)}
+
+@app.delete("/api/servers/{sid}")
+def srv_delete(req: Request, sid: str, wipe: bool = False):
+    need(req, "admin")
+    return SV.delete_server(sid, wipe)
+
+# ---------- server status/control (per-server) ----------
+@app.get("/api/status")
+def status(req: Request, server_id: str = ""):
+    need(req, "viewer")
+    srv, sdir = resolve(req, server_id)
+    sid = srv["id"] if srv else ""
+    m = SM.metrics(server_id=sid, server=srv)
+    props = OM.read_props(sdir)
     soft = {}
     try:
-        soft = json.loads((DATA / "software.json").read_text())
+        soft = json.loads((DATA / f"software-{sid}.json").read_text())
     except Exception:
-        pass
+        try:
+            soft = json.loads((DATA / "software.json").read_text())
+        except Exception:
+            pass
     return {**m, "props": {k: props.get(k) for k in ("motd", "max-players", "server-port")},
-            "software": soft, "base": str(BASE)}
+            "software": soft, "server": srv, "network_mode": props.get("_network_mode", (srv or {}).get("network_mode", "wan"))}
 
 @app.post("/api/server/{act}")
-def server_act(req: Request, act: str, body: dict | None = None):
+def server_act(req: Request, act: str, server_id: str = "", body: dict | None = None):
     need(req, "moderator")
+    srv, _ = resolve(req, server_id or (body or {}).get("server_id", ""))
+    sid = srv["id"] if srv else ""
     if act == "command":
         cmd = (body or {}).get("command", "")
         if not cmd:
             raise HTTPException(400, "empty command")
-        return SM.send_command(cmd)
-    return SM.action(act)
+        return SM.send_command(cmd, server_id=sid, server=srv)
+    return SM.action(act, server_id=sid, server=srv)
 
 @app.get("/api/logs")
-def logs(req: Request, lines: int = 300):
+def logs(req: Request, lines: int = 300, server_id: str = ""):
     need(req, "viewer")
-    return {"log": SM.tail_log(lines)}
+    srv, _ = resolve(req, server_id)
+    return {"log": SM.tail_log(lines, server_id=srv["id"] if srv else "", server=srv)}
 
 @app.get("/api/metrics")
-def metrics(req: Request):
+def metrics(req: Request, server_id: str = ""):
     need(req, "viewer")
-    return SM.metrics()
+    srv, _ = resolve(req, server_id)
+    return SM.metrics(server_id=srv["id"] if srv else "", server=srv)
 
-# WS console: recv {command}, send log lines + command output. ANSI preserved raw.
 @app.websocket("/ws/console")
-async def ws_console(ws: WebSocket, token: str = ""):
+async def ws_console(ws: WebSocket, token: str = "", server_id: str = ""):
     u = A.check_token(token)
     if not u:
         await ws.close(code=4401)
         return
     await ws.accept()
-    await ws.send_text(f"\x1b[36m[VoHost] connected as {u['username']} ({u['role']})\x1b[0m")
+    srv = None
+    try:
+        srv = SV.get_server(server_id) if server_id else (SV.list_servers()[0] if SV.list_servers() else None)
+    except Exception:
+        pass
+    sid = srv["id"] if srv else ""
+    await ws.send_text(f"\x1b[36m[VoHost] connected as {u['username']} ({u['role']}) [{(srv or {}).get('name','?')}]\x1b[0m")
     try:
         while True:
             msg = await ws.receive_text()
@@ -125,7 +191,7 @@ async def ws_console(ws: WebSocket, token: str = ""):
             except Exception:
                 cmd = msg
             if A.require_role(u, "moderator"):
-                r = SM.send_command(cmd)
+                r = SM.send_command(cmd, server_id=sid, server=srv)
                 out = r.get("out") or r.get("error") or json.dumps(r)
                 await ws.send_text(f"\x1b[33m> {cmd}\x1b[0m\n{out}")
             else:
@@ -176,39 +242,44 @@ def loader_versions(req: Request, loader: str, mc: str = ""):
 @app.post("/api/software/install")
 def sw_install(req: Request, body: dict):
     need(req, "admin")
-    # Records desired software; actual jar download happens via installer script hook.
-    (DATA / "software.json").write_text(json.dumps({**body, "ts": time.time()}, indent=2))
+    srv, sdir = resolve(req, body.get("server_id", ""))
+    sid = srv["id"] if srv else "main"
+    (DATA / f"software-{sid}.json").write_text(json.dumps({**body, "ts": time.time()}, indent=2))
     loader, mc = body.get("loader", "vanilla"), body.get("mc_version", "latest")
     lv = body.get("loader_version", "latest")
     hook = BASE / "scripts" / "install-server.sh"
-    note = f"recorded {loader} {mc} build={lv}."
+    note = f"recorded {loader} {mc} build={lv} on {(srv or {}).get('name', sid)}."
     if hook.exists():
-        r = subprocess.run(["bash", str(hook), loader, mc, lv], capture_output=True, text=True, timeout=600)
+        env = dict(os.environ, VOHOST_SERVER_DIR=str(sdir))
+        r = subprocess.run(["bash", str(hook), loader, mc, lv], capture_output=True, text=True, timeout=600, env=env)
         note += "\n" + (r.stdout + r.stderr)[-4000:]
     else:
-        # minimal vanilla bootstrap so Server tab can start without hook
         note += " (no install-server.sh hook — set jar manually in Files/server.jar)."
     try:
-        eula = SERVER_DIR / "eula.txt"
+        eula = sdir / "eula.txt"
         if body.get("accept_eula") and eula.exists():
             eula.write_text(eula.read_text().replace("eula=false", "eula=true"))
     except Exception:
         pass
+    if srv:
+        SV.update_server(sid, {"loader": loader, "mc_version": mc})
     return {"ok": True, "note": note, "java": java_for_mc(mc if mc != "latest" else "1.21", load_config())}
 
 @app.get("/api/eula")
-def eula(req: Request):
+def eula(req: Request, server_id: str = ""):
     need(req, "viewer")
-    p = SERVER_DIR / "eula.txt"
+    _, sdir = resolve(req, server_id)
+    p = sdir / "eula.txt"
     return {"exists": p.exists(), "text": p.read_text() if p.exists() else ""}
 
 @app.post("/api/eula")
 def eula_accept(req: Request, body: dict):
     need(req, "admin")
-    (SERVER_DIR / "eula.txt").write_text("eula=true\n" if body.get("accept") else "eula=false\n")
+    _, sdir = resolve(req, body.get("server_id", ""))
+    (sdir / "eula.txt").write_text("eula=true\n" if body.get("accept") else "eula=false\n")
     return {"ok": True}
 
-# ---------- mods & plugins ----------
+# ---------- mods & plugins (+ installed + uninstall) ----------
 @app.get("/api/catalog/search")
 def catalog(req: Request, source: str = "modrinth", q: str = "", loader: str = "",
             mc: str = "", kind: str = "mod"):
@@ -226,14 +297,30 @@ def catalog_versions(req: Request, source: str = "modrinth", project: str = "",
     need(req, "viewer")
     if source == "modrinth":
         return {"versions": MP.modrinth_versions(project, loader or None, mc or None)}
-    return {"versions": [], "note": "pick file on CurseForge site; paste URL to /api/catalog/install-cf-url"}
+    return {"versions": [], "note": "pick file on CurseForge site; paste URL to install"}
+
+@app.get("/api/catalog/installed")
+def catalog_installed(req: Request, server_id: str = "", kind: str = ""):
+    need(req, "viewer")
+    _, sdir = resolve(req, server_id)
+    out = []
+    for k, folder in (("mod", "mods"), ("plugin", "plugins")):
+        if kind and kind != k:
+            continue
+        d = sdir / folder
+        if d.exists():
+            for f in sorted(d.iterdir()):
+                if f.is_file():
+                    out.append({"kind": k, "file": f.name, "size": f.stat().st_size, "mtime": f.stat().st_mtime})
+    return {"installed": out}
 
 @app.post("/api/catalog/install")
 def catalog_install(req: Request, body: dict):
     need(req, "moderator")
     import requests as R
+    _, sdir = resolve(req, body.get("server_id", ""))
     source, kind = body.get("source", "modrinth"), body.get("kind", "mod")
-    destdir = SERVER_DIR / ("mods" if kind == "mod" else "plugins")
+    destdir = sdir / ("mods" if kind == "mod" else "plugins")
     destdir.mkdir(exist_ok=True)
     if source == "modrinth":
         vs = MP.modrinth_versions(body["project"], body.get("loader"), body.get("mc"))
@@ -244,7 +331,6 @@ def catalog_install(req: Request, body: dict):
         data = R.get(f0["url"], timeout=60).content
         (destdir / f0["filename"]).write_bytes(data)
         return {"ok": True, "file": f0["filename"]}
-    # curseforge direct file url install
     url = body.get("file_url", "")
     if not url:
         raise HTTPException(400, "file_url required for curseforge")
@@ -252,11 +338,25 @@ def catalog_install(req: Request, body: dict):
     (destdir / fn).write_bytes(R.get(url, timeout=60).content)
     return {"ok": True, "file": fn}
 
+@app.post("/api/catalog/uninstall")
+def catalog_uninstall(req: Request, body: dict):
+    need(req, "moderator")
+    _, sdir = resolve(req, body.get("server_id", ""))
+    kind, fn = body.get("kind", "mod"), body.get("file", "")
+    if not fn or "/" in fn or ".." in fn:
+        raise HTTPException(400, "bad file")
+    p = sdir / ("mods" if kind == "mod" else "plugins") / fn
+    if not p.exists():
+        raise HTTPException(404, "not installed")
+    p.unlink()
+    return {"ok": True, "removed": fn}
+
 # ---------- files ----------
 @app.get("/api/files")
-def files(req: Request, path: str = ""):
+def files(req: Request, path: str = "", server_id: str = ""):
     need(req, "viewer")
-    p = safe_join(SERVER_DIR, path)
+    _, sdir = resolve(req, server_id)
+    p = safe_join(sdir, path)
     if p.is_file():
         return FileResponse(str(p), filename=p.name)
     items = []
@@ -268,15 +368,17 @@ def files(req: Request, path: str = ""):
 @app.post("/api/files/mkdir")
 def mkdir(req: Request, body: dict):
     need(req, "moderator")
-    p = safe_join(SERVER_DIR, body.get("path", ""))
+    _, sdir = resolve(req, body.get("server_id", ""))
+    p = safe_join(sdir, body.get("path", ""))
     p.mkdir(parents=True, exist_ok=True)
     return {"ok": True}
 
 @app.post("/api/files/delete")
 def delete(req: Request, body: dict):
     need(req, "admin")
-    p = safe_join(SERVER_DIR, body.get("path", ""))
-    if p == SERVER_DIR.resolve():
+    _, sdir = resolve(req, body.get("server_id", ""))
+    p = safe_join(sdir, body.get("path", ""))
+    if p == sdir.resolve():
         raise HTTPException(400, "refuse to delete server root")
     if p.is_dir():
         shutil.rmtree(p)
@@ -287,19 +389,20 @@ def delete(req: Request, body: dict):
 @app.post("/api/files/rename")
 def rename(req: Request, body: dict):
     need(req, "moderator")
-    src = safe_join(SERVER_DIR, body.get("src", ""))
-    dst = safe_join(SERVER_DIR, body.get("dst", ""))
+    _, sdir = resolve(req, body.get("server_id", ""))
+    src = safe_join(sdir, body.get("src", ""))
+    dst = safe_join(sdir, body.get("dst", ""))
     src.rename(dst)
     return {"ok": True}
 
 @app.post("/api/files/upload")
-async def upload(req: Request, path: str = "", file: UploadFile = File(...)):
+async def upload(req: Request, path: str = "", server_id: str = "", file: UploadFile = File(...)):
     need(req, "moderator")
-    dest = safe_join(SERVER_DIR, path) / file.filename
+    _, sdir = resolve(req, server_id)
+    dest = safe_join(sdir, path) / file.filename
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(await file.read())
-    # auto-extract zips uploaded outside worlds (files tab convenience)
-    if dest.suffix == ".zip" and (body_flag := req.query_params.get("extract")) == "1":
+    if dest.suffix == ".zip" and req.query_params.get("extract") == "1":
         with zipfile.ZipFile(dest) as z:
             z.extractall(dest.parent)
         dest.unlink()
@@ -307,41 +410,43 @@ async def upload(req: Request, path: str = "", file: UploadFile = File(...)):
 
 # ---------- worlds ----------
 @app.get("/api/worlds")
-def worlds(req: Request):
+def worlds(req: Request, server_id: str = ""):
     need(req, "viewer")
+    _, sdir = resolve(req, server_id)
     out = []
     for w in ["world", "world_nether", "world_the_end"]:
-        p = SERVER_DIR / w
+        p = sdir / w
         if p.exists():
             size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
             out.append({"name": w, "size": size})
     return {"worlds": out}
 
 @app.get("/api/worlds/download")
-def world_dl(req: Request, name: str = "world"):
+def world_dl(req: Request, name: str = "world", server_id: str = ""):
     need(req, "viewer")
-    src = safe_join(SERVER_DIR, name)
+    _, sdir = resolve(req, server_id)
+    src = safe_join(sdir, name)
     tmp = DATA / f"{name}.zip"
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         for f in src.rglob("*"):
             if f.is_file():
-                z.write(f, f.relative_to(SERVER_DIR))
+                z.write(f, f.relative_to(sdir))
     return FileResponse(str(tmp), filename=f"{name}.zip")
 
 @app.post("/api/worlds/upload")
-async def world_ul(req: Request, file: UploadFile = File(...)):
+async def world_ul(req: Request, server_id: str = "", file: UploadFile = File(...)):
     need(req, "moderator")
+    _, sdir = resolve(req, server_id)
     if not file.filename.endswith(".zip"):
         raise HTTPException(400, "world import only accepts .zip")
     tmp = DATA / f"world-import-{int(time.time())}.zip"
     tmp.write_bytes(await file.read())
-    # delete old world, extract new, delete leftover zip
     for w in ["world", "world_nether", "world_the_end"]:
-        p = SERVER_DIR / w
+        p = sdir / w
         if p.exists():
             shutil.rmtree(p)
     with zipfile.ZipFile(tmp) as z:
-        z.extractall(SERVER_DIR)
+        z.extractall(sdir)
     tmp.unlink(missing_ok=True)
     return {"ok": True, "note": "old world replaced, zip leftover deleted"}
 
@@ -351,12 +456,13 @@ BANTIME_HELP = "duration like 7d / 2h / 30m or 'forever'"
 @app.post("/api/players/action")
 def p_action(req: Request, body: dict):
     need(req, "moderator")
+    srv, _ = resolve(req, body.get("server_id", ""))
+    sid = srv["id"] if srv else ""
     name = body.get("name", "")
     act = body.get("action", "")
     dur = body.get("duration", "")
     if not name or not act:
         raise HTTPException(400, "name+action required")
-    # map feed/kill which have no vanilla cmd: feed=saturate via effect/give, kill=kill
     mapping = {
         "op": f"op {name}", "deop": f"deop {name}",
         "kick": f"kick {name} {body.get('reason', 'kicked by VoHost')}",
@@ -366,7 +472,6 @@ def p_action(req: Request, body: dict):
         "pardon": f"pardon {name}", "pardon-ip": f"pardon-ip {name}",
     }
     if act == "tempban":
-        # vanilla has no tempban; record expiry and ban now (unban via scheduler check)
         bans = {}
         try:
             bans = json.loads((DATA / "tempbans.json").read_text())
@@ -374,10 +479,10 @@ def p_action(req: Request, body: dict):
             pass
         bans[name] = {"until": time.time() + _parse_dur(dur), "reason": body.get("reason", "")}
         (DATA / "tempbans.json").write_text(json.dumps(bans, indent=2))
-        return SM.send_command(f"ban {name} temp {dur} {body.get('reason', '')}")
+        return SM.send_command(f"ban {name} temp {dur} {body.get('reason', '')}", server_id=sid, server=srv)
     if act not in mapping:
         raise HTTPException(400, f"unknown action {act} ({BANTIME_HELP})")
-    return SM.send_command(mapping[act])
+    return SM.send_command(mapping[act], server_id=sid, server=srv)
 
 def _parse_dur(s: str) -> float:
     import re
@@ -390,52 +495,55 @@ def _parse_dur(s: str) -> float:
     return n * {"s": 1, "m": 60, "h": 3600, "d": 86400}[u]
 
 @app.get("/api/players/seen")
-def p_seen(req: Request):
+def p_seen(req: Request, server_id: str = ""):
     need(req, "viewer")
-    return {"players": NP.list_players_seen()}
+    _, sdir = resolve(req, server_id)
+    return {"players": NP.list_players_seen(sdir)}
 
 @app.get("/api/players/data")
-def p_data(req: Request, uuid: str):
+def p_data(req: Request, uuid: str, server_id: str = ""):
     need(req, "moderator")
-    return NP.read_inventory(uuid)
+    _, sdir = resolve(req, server_id)
+    return NP.read_inventory(uuid, sdir)
 
 # ---------- options ----------
 @app.get("/api/options")
-def opts(req: Request):
+def opts(req: Request, server_id: str = ""):
     need(req, "viewer")
-    props = OM.read_props()
-    icon = SERVER_DIR / "server-icon.png"
+    srv, sdir = resolve(req, server_id)
+    props = OM.read_props(sdir)
+    icon = sdir / "server-icon.png"
     icon_b64 = base64.b64encode(icon.read_bytes()).decode() if icon.exists() else ""
     cfg = load_config()
     return {"props": props, "toggles": OM.TOGGLES, "icon": icon_b64,
             "timezone": props.get("_timezone", "UTC"), "env": props.get("_env", ""),
+            "network_mode": props.get("_network_mode", (srv or {}).get("network_mode", "wan")),
+            "server": srv,
             "curseforge_key_set": bool(cfg.get("curseforge_api_key")),
             "discord_set": bool(cfg.get("discord_webhook"))}
 
 @app.put("/api/options")
 def opts_put(req: Request, body: dict):
     need(req, "moderator")
+    srv, sdir = resolve(req, body.get("server_id", ""))
     props = body.get("props", {})
-    OM.write_props(props)
+    OM.write_props(props, sdir)
+    if srv and "_network_mode" in props:
+        SV.update_server(srv["id"], {"network_mode": props["_network_mode"]})
     cfg = load_config()
     for k in ("curseforge_api_key", "discord_webhook", "timezone"):
         if k in body:
             cfg[k] = body[k]
-    if "timezone" in (body.get("props", {}) or {}):
-        pass
     save_config(cfg)
     if body.get("icon_b64"):
-        (SERVER_DIR / "server-icon.png").write_bytes(base64.b64decode(body["icon_b64"]))
-    # sync rcon password live
-    if "rcon.password" in props:
-        cfg["rcon"] = {"host": "127.0.0.1", "port": int(props.get("rcon.port", 25575)),
-                       "password": props["rcon.password"]}
-        save_config(cfg)
-    return {"ok": True, "note": "saved live — restart server to apply server.properties (icon/MOTD apply on refresh)"}
+        (sdir / "server-icon.png").write_bytes(base64.b64decode(body["icon_b64"]))
+    if "rcon.password" in props and srv:
+        pass  # per-server rcon password lives in server.properties; server_manager reads it live
+    return {"ok": True, "note": "saved live — restart server to apply server.properties"}
 
-# ---------- backups / scheduler / misc ----------
+# ---------- backups / misc ----------
 @app.get("/api/backups")
-def bk_list(req: Request):
+def bk_list(req: Request, server_id: str = ""):
     need(req, "viewer")
     return BK.list_backups()
 

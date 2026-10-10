@@ -41,6 +41,7 @@ DASH_PORT="$DASH_PORT" MC_PORT="$MC_PORT" bash "$DEST/scripts/firewall.sh" "$DAS
 # systemd units (rewrite port via drop-in env if custom)
 sed "s/--port 8080/--port $DASH_PORT/" "$SRC_DIR/systemd/vohost-dashboard.service" > /etc/systemd/system/vohost-dashboard.service
 cp "$SRC_DIR/systemd/vohost-mc.service" /etc/systemd/system/vohost-mc.service
+cp "$SRC_DIR/systemd/vohost-mc@.service" /etc/systemd/system/vohost-mc@.service
 ln -sf "$DEST/scripts/log-window.sh" /usr/local/bin/vohost-logs
 ln -sf "$DEST/scripts/vohost.sh" /usr/local/bin/vohost
 chmod +x /usr/local/bin/vohost-logs /usr/local/bin/vohost

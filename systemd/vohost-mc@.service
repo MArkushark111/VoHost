@@ -1,0 +1,18 @@
+[Unit]
+Description=VoHost Minecraft Server %i
+After=network.target vohost-dashboard.service
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vohost/servers/%i
+Environment=JAVA=/usr/lib/jvm/temurin-21-jdk-amd64/bin/java
+Environment=MC_MIN=1G
+Environment=MC_MAX=4G
+EnvironmentFile=-/opt/vohost/data/mc-%i.env
+ExecStart=/bin/bash -c ': ${JAVA:=/usr/lib/jvm/temurin-21-jdk-amd64/bin/java}; : ${MC_MIN:=1G}; : ${MC_MAX:=4G}; exec $JAVA -Xms$MC_MIN -Xmx$MC_MAX -jar server.jar nogui'
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/opt/vohost/logs/mc-%i.log
+StandardError=inherit
+[Install]
+WantedBy=multi-user.target

@@ -2,8 +2,9 @@
 <title>VoHost</title><link rel="stylesheet" href="/assets/style.css"></head>
 <body>
 <aside>
-  <div class="brand"><div><b id="srvName">mx101</b><small id="srvId">#server</small></div><button class="stopbtn" id="btnStop" title="Stop server">⏻</button></div>
+  <div class="brand"><div><b id="srvName">VoHost</b><small id="srvId">select server</small></div><button class="stopbtn" id="btnStop" title="Stop server">⏻</button></div>
   <nav id="nav">
+    <button data-t="servers">🖥 Servers</button>
     <button data-t="server">⏻ Server</button>
     <button data-t="options">↔ Options</button>
     <button data-t="console">≻ Console</button>
@@ -20,10 +21,16 @@
   <div style="padding:10px"><button class="act" id="btnLogin">Login</button> <span class="mut" id="me"></span></div>
 </aside>
 <main>
-<section class="card" data-s="server"><h2>Server</h2>
- <div class="row"><div>CPU %: <b id="mCpu">-</b></div><div>RAM: <b id="mRam">-</b></div><div>MC RSS: <b id="mMc">-</b></div><div>TPS: <b id="mTps">-</b></div><div>Status: <b id="mOn">-</b></div></div>
+<section class="card" data-s="servers"><h2>Servers</h2>
+ <p class="mut" id="srvCount"></p><div id="srvList"></div>
+ <h3>Add server</h3>
+ <div class="row"><input id="nsName" placeholder="name e.g. survival"><select id="nsNet"><option value="wan">WAN — public (port-forward + UFW open)</option><option value="lan">LAN — home only (UFW restricted)</option></select><input id="nsMem" placeholder="RAM max e.g. 4G" value="4G"></div>
+ <button class="act ok" id="nsGo">Add</button> <span class="mut" id="nsOut"></span>
+</section>
+<section class="card hide" data-s="server"><h2>Server <span class="mut" id="curSrv"></span></h2>
+ <div class="row"><div>Network: <b id="mNet">-</b></div><div>Port: <b id="mPort">-</b></div><div>CPU %: <b id="mCpu">-</b></div><div>RAM: <b id="mRam">-</b></div><div>Status: <b id="mOn">-</b></div></div>
  <canvas id="graph" width="900" height="120" style="width:100%;background:#0c1219;border-radius:8px"></canvas>
- <div><button class="act ok" data-a="start">Start</button><button class="act warn" data-a="restart">Restart</button><button class="act danger" data-a="stop">Shutdown</button><button class="act" id="btnEula">Accept EULA</button></div>
+ <div><button class="act ok" data-a="start">Start</button><button class="act warn" data-a="restart">Restart</button><button class="act danger" data-a="stop">Shutdown</button><button class="act" id="btnEula">Accept EULA</button> <select id="netSel" style="max-width:220px"><option value="wan">WAN public</option><option value="lan">LAN only</option></select><button class="act" id="netGo">Apply network</button></div>
  <p class="mut">Software: <span id="softCur">-</span> · MOTD: <span id="motdCur">-</span></p>
 </section>
 <section class="card hide" data-s="options"><h2>Options</h2><div id="optForm"></div>
@@ -32,7 +39,7 @@
  <label>Server icon (64x64 png)</label><input type="file" id="optIcon" accept="image/png">
  <label>CurseForge API key</label><input id="optCF" placeholder="paste key from console.curseforge.com">
  <label>Discord webhook</label><input id="optDiscord" placeholder="https://discord.com/api/webhooks/...">
- <div><button class="act ok" id="optSave">Save (live)</button> <span class="mut">toggles + icon/MOTD apply like real MC after restart</span></div>
+ <div><button class="act ok" id="optSave">Save (live)</button></div>
 </section>
 <section class="card hide" data-s="console"><h2>Console (colors)</h2><div id="term"></div>
  <div class="row"><input id="cmd" placeholder="say hello from VoHost..."><button class="act" id="sendCmd">Send</button></div></section>
@@ -44,12 +51,11 @@
 <section class="card hide" data-s="software"><h2>Software</h2>
  <div class="row"><select id="swLoader"></select><select id="swMc"></select><select id="swBuild"></select></div>
  <label><input type="checkbox" id="swEula" style="width:auto"> Accept EULA (Mojang)</label><br>
- <button class="act ok" id="swInstall">Install / Switch</button> <span class="mut" id="swOut"></span>
- <p class="mut">Vanilla · Snapshot · Fabric · Quilt · Forge · NeoForge · Paper · Purpur · Spigot/Bukkit · Arclight · Modpacks · Hytale(bonus: manual jar upload in Files).</p></section>
-<section class="card hide" data-s="mods"><h2>Mods <span class="mut">(Fabric/Forge/Quilt/NeoForge/Arclight)</span></h2>
- <div class="row"><select id="modSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="modQ" placeholder="search e.g. sodium"><select id="modKind"><option value="mod">mod</option><option value="modpack">modpack</option></select><button class="act" id="modGo">Search</button></div><div id="modList"></div></section>
-<section class="card hide" data-s="plugins"><h2>Plugins <span class="mut">(Paper/Purpur/Spigot/Arclight)</span></h2>
- <div class="row"><select id="plgSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="plgQ" placeholder="search e.g. Essentials"><button class="act" id="plgGo">Search</button></div><div id="plgList"></div></section>
+ <button class="act ok" id="swInstall">Install / Switch</button> <span class="mut" id="swOut"></span></section>
+<section class="card hide" data-s="mods"><h2>Mods</h2><h3>Installed</h3><div id="modInst"></div><button class="act" id="modRef">Refresh installed</button>
+ <h3>Browse / install</h3><div class="row"><select id="modSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="modQ" placeholder="search e.g. sodium"><select id="modKind"><option value="mod">mod</option><option value="modpack">modpack</option></select><button class="act" id="modGo">Search</button></div><div id="modList"></div></section>
+<section class="card hide" data-s="plugins"><h2>Plugins</h2><h3>Installed</h3><div id="plgInst"></div><button class="act" id="plgRef">Refresh installed</button>
+ <h3>Browse / install</h3><div class="row"><select id="plgSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="plgQ" placeholder="search e.g. Essentials"><button class="act" id="plgGo">Search</button></div><div id="plgList"></div></section>
 <section class="card hide" data-s="files"><h2>Files</h2><div class="row"><input id="fPath" value=""><button class="act" id="fUp">Up</button><button class="act" id="fMk">New folder</button><input type="file" id="fFile" multiple></div><table id="fTable"></table></section>
 <section class="card hide" data-s="worlds"><h2>Worlds</h2><div id="wList"></div>
  <div class="row"><select id="wName"><option>world</option><option>world_nether</option><option>world_the_end</option></select><button class="act" id="wDl">Download zip</button></div>

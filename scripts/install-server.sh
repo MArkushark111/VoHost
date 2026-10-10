@@ -3,7 +3,7 @@
 # usage: install-server.sh <loader> <mc_version> <loader_version>
 set -euo pipefail
 LOADER="${1:-vanilla}"; MC="${2:-1.21}"; BUILD="${3:-latest}"
-DEST="${VOHOST_BASE:-/opt/vohost}/server"
+DEST="${VOHOST_SERVER_DIR:-${VOHOST_BASE:-/opt/vohost}/server}"
 mkdir -p "$DEST"; cd "$DEST"
 
 dl() { wget -q -O "$2" "$1" && echo "OK $2"; }

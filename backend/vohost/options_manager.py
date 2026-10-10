@@ -1,4 +1,4 @@
-"""server.properties + MOTD/icon/options with toggle support."""
+"""server.properties + MOTD/icon/options with toggle support. Multi-server aware via sdir param."""
 from pathlib import Path
 from .config import SERVER_DIR
 
@@ -27,34 +27,40 @@ DEFAULT_PROPS = {
 TOGGLES = ["white-list", "allow-flight", "force-gamemode", "pvp", "online-mode",
            "enable-rcon", "require-resource-pack", "enable-whitelist"]
 
-def props_path() -> Path:
-    return SERVER_DIR / "server.properties"
+def _dir(sdir=None) -> Path:
+    return Path(sdir) if sdir else SERVER_DIR
 
-def read_props() -> dict:
+def props_path(sdir=None) -> Path:
+    return _dir(sdir) / "server.properties"
+
+def read_props(sdir=None) -> dict:
     d = dict(DEFAULT_PROPS)
-    p = props_path()
+    p = props_path(sdir)
+    base = _dir(sdir)
     if p.exists():
         for line in p.read_text(errors="replace").splitlines():
             if "=" in line and not line.startswith("#"):
                 k, v = line.split("=", 1)
                 d[k.strip()] = v.strip()
-    # overlay env/timezone + name
-    d["_timezone"] = (SERVER_DIR / ".timezone").read_text().strip() if (SERVER_DIR / ".timezone").exists() else "UTC"
-    d["_env"] = (SERVER_DIR / ".env_extra").read_text() if (SERVER_DIR / ".env_extra").exists() else ""
+    d["_timezone"] = (base / ".timezone").read_text().strip() if (base / ".timezone").exists() else "UTC"
+    d["_env"] = (base / ".env_extra").read_text() if (base / ".env_extra").exists() else ""
+    d["_network_mode"] = (base / ".network_mode").read_text().strip() if (base / ".network_mode").exists() else "wan"
     return d
 
-def write_props(patch: dict):
-    cur = read_props()
+def write_props(patch: dict, sdir=None):
+    base = _dir(sdir)
+    cur = read_props(sdir)
     cur.update({k: str(v) for k, v in patch.items() if not k.startswith("_")})
     lines = ["# VoHost server.properties (managed)"]
     for k, v in cur.items():
         if k.startswith("_"):
             continue
         lines.append(f"{k}={v}")
-    props_path().write_text("\n".join(lines) + "\n")
+    props_path(sdir).write_text("\n".join(lines) + "\n")
     if "_timezone" in patch:
-        (SERVER_DIR / ".timezone").write_text(str(patch["_timezone"]))
+        (base / ".timezone").write_text(str(patch["_timezone"]))
     if "_env" in patch:
-        (SERVER_DIR / ".env_extra").write_text(str(patch["_env"]))
-    # keep RCON in sync note for backend config (actual rcon secret lives in data/config.json too)
+        (base / ".env_extra").write_text(str(patch["_env"]))
+    if "_network_mode" in patch:
+        (base / ".network_mode").write_text(str(patch["_network_mode"]))
     return cur
