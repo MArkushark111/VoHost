@@ -275,15 +275,18 @@ def sw_install(req: Request, body: dict):
     need(req, "admin")
     srv, sdir = resolve(req, body.get("server_id", ""))
     sid = srv["id"] if srv else "main"
+    was_online = SM.service_active(server_id=sid, server=srv)
     (DATA / f"software-{sid}.json").write_text(json.dumps({**body, "ts": time.time()}, indent=2))
     loader, mc = body.get("loader", "vanilla"), body.get("mc_version", "latest")
     lv = body.get("loader_version", "latest")
     hook = BASE / "scripts" / "install-server.sh"
     note = f"recorded {loader} {mc} build={lv} on {(srv or {}).get('name', sid)}."
+    hook_ok = False
     if hook.exists():
         env = dict(os.environ, VOHOST_SERVER_DIR=str(sdir))
         r = subprocess.run(["bash", str(hook), loader, mc, lv], capture_output=True, text=True, timeout=600, env=env)
         note += "\n" + (r.stdout + r.stderr)[-4000:]
+        hook_ok = r.returncode == 0 and ("OK" in r.stdout or "installed" in r.stdout)
     else:
         note += " (no install-server.sh hook — set jar manually in Files/server.jar)."
     try:
@@ -294,6 +297,10 @@ def sw_install(req: Request, body: dict):
         pass
     if srv:
         SV.update_server(sid, {"loader": loader, "mc_version": mc})
+    if hook_ok and was_online:
+        note += "\nRestarting server to apply the new jar..."
+        time.sleep(1)
+        SM.action("restart", server_id=sid, server=srv)
     return {"ok": True, "note": note, "java": java_for_mc(mc if mc != "latest" else "1.21", load_config())}
 
 @app.get("/api/eula")
@@ -524,6 +531,27 @@ def _parse_dur(s: str) -> float:
         return 86400
     n, u = int(m.group(1)), m.group(2)
     return n * {"s": 1, "m": 60, "h": 3600, "d": 86400}[u]
+
+@app.get("/api/players/online")
+def p_online(req: Request, server_id: str = ""):
+    """Live online players from RCON `list` (shows players even before anyone spawns)."""
+    need(req, "viewer")
+    srv, _ = resolve(req, server_id)
+    sid = srv["id"] if srv else ""
+    r = SM.send_command("list", server_id=sid, server=srv)
+    if not r.get("ok"):
+        return {"error": "server offline or RCON disabled (enable-rcon=true in Options, then restart)"}
+    out = r.get("out", "")
+    import re
+    m = re.search(r"There are (\d+) of a max(?: of)? (\d+) players online:?(.*)", out)
+    if m:
+        names = [n.strip() for n in m.group(3).split(",") if n.strip()]
+        return {"count": int(m.group(1)), "max": int(m.group(2)), "online": names}
+    m2 = re.search(r"(\d+)/(\d+) players online:?(.*)", out)
+    if m2:
+        names = [n.strip() for n in m2.group(3).split(",") if n.strip()]
+        return {"count": int(m2.group(1)), "max": int(m2.group(2)), "online": names}
+    return {"raw": out[:500]}
 
 @app.get("/api/players/seen")
 def p_seen(req: Request, server_id: str = ""):

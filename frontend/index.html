@@ -2,66 +2,133 @@
 <title>VoHost</title><link rel="stylesheet" href="/assets/style.css"></head>
 <body>
 <aside>
-  <div class="brand"><div><b id="srvName">VoHost</b><small id="srvId">select server</small></div><button class="stopbtn" id="btnStop" title="Stop server">⏻</button></div>
+  <div class="brand"><b id="srvName">VoHost</b><small id="srvId">select a server</small></div>
   <nav id="nav">
-    <button data-t="servers">🖥 Servers</button>
-    <button data-t="server">⏻ Server</button>
-    <button data-t="options">↔ Options</button>
-    <button data-t="console">≻ Console</button>
-    <button data-t="log">≣ Log</button>
-    <button data-t="players">👥 Players</button>
-    <button data-t="software">⚙ Software <span class="sub">›</span></button>
-    <button data-t="mods" id="navMods">⚙ Mods</button>
-    <button data-t="plugins" id="navPlugins">🧩 Plugins</button>
-    <button data-t="files">🗁 Files</button>
-    <button data-t="worlds">🌍 Worlds</button>
-    <button data-t="backups">↻ Backups <span class="badge" id="bkBadge">!</span></button>
-    <button data-t="access">👤 Access</button>
+    <button data-t="servers" class="on">Servers</button>
+    <button data-t="server">Server</button>
+    <button data-t="options">Options</button>
+    <button data-t="console">Console</button>
+    <button data-t="log">Log</button>
+    <button data-t="players">Players</button>
+    <button data-t="software">Software <span class="sub">v</span></button>
+    <button data-t="mods" id="navMods" style="display:none">Mods</button>
+    <button data-t="plugins" id="navPlugins" style="display:none">Plugins</button>
+    <button data-t="files">Files</button>
+    <button data-t="worlds">Worlds</button>
+    <button data-t="backups">Backups <span class="badge" id="bkBadge" style="display:none">!</span></button>
+    <button data-t="access">Access</button>
   </nav>
   <div style="padding:10px"><button class="act" id="btnLogin">Login</button> <span class="mut" id="me"></span></div>
 </aside>
 <main>
-<section class="card" data-s="servers"><h2>Servers</h2>
- <p class="mut" id="srvCount"></p><div id="srvList"></div>
- <h3>Add server</h3>
- <div class="row"><input id="nsName" placeholder="name e.g. survival"><select id="nsNet"><option value="wan">WAN — public (port-forward + UFW open)</option><option value="lan">LAN — home only (UFW restricted)</option></select><input id="nsMem" placeholder="RAM max e.g. 4G" value="4G"></div>
- <button class="act ok" id="nsGo">Add</button> <span class="mut" id="nsOut"></span>
+
+<section class="card hide" data-s="servers">
+  <h2>Servers</h2>
+  <p class="mut" id="srvCount"></p><div id="srvList"></div>
+  <h3>Add a server</h3>
+  <div class="row"><input id="nsName" placeholder="name (e.g. survival)"><select id="nsNet"><option value="wan">WAN - public (port-forward)</option><option value="lan">LAN - home only</option></select><input id="nsMem" value="4G" placeholder="RAM max"></div>
+  <button class="act ok" id="nsGo">Add</button> <span class="mut" id="nsOut"></span>
 </section>
-<section class="card hide" data-s="server"><h2>Server <span class="mut" id="curSrv"></span></h2>
- <div class="row"><div>Network: <b id="mNet">-</b></div><div>Port: <b id="mPort">-</b></div><div>CPU %: <b id="mCpu">-</b></div><div>RAM: <b id="mRam">-</b></div><div>Status: <b id="mOn">-</b></div></div>
- <canvas id="graph" width="900" height="120" style="width:100%;background:#0c1219;border-radius:8px"></canvas>
- <div><button class="act ok" data-a="start">Start</button><button class="act warn" data-a="restart">Restart</button><button class="act danger" data-a="stop">Shutdown</button><button class="act" id="btnEula">Accept EULA</button> <select id="netSel" style="max-width:220px"><option value="wan">WAN public</option><option value="lan">LAN only</option></select><button class="act" id="netGo">Apply network</button></div>
- <p class="mut">Software: <span id="softCur">-</span> · MOTD: <span id="motdCur">-</span></p>
+
+<section class="card hide" data-s="server">
+  <h2>Server <span class="mut" id="curSrv"></span></h2>
+  <div class="row"><div>Loader: <b id="mSoft">-</b></div><div>Network: <b id="mNet">-</b></div><div>Port: <b id="mPort">-</b></div><div>CPU: <b id="mCpu">-</b></div><div>RAM: <b id="mRam">-</b></div><div>Status: <b id="mOn">-</b></div><div>TPS: <b id="mTps">-</b></div></div>
+  <canvas id="graph" width="900" height="120" style="width:100%;background:#0c1219;border-radius:8px"></canvas>
+  <div>
+    <button class="act ok" data-a="start">Start</button>
+    <button class="act warn" data-a="restart">Restart</button>
+    <button class="act danger" data-a="stop">Shutdown</button>
+    <button class="act" id="btnEula">Accept EULA</button>
+    <select id="netSel" style="max-width:200px"><option value="wan">WAN public</option><option value="lan">LAN only</option></select>
+    <button class="act" id="netGo">Apply network</button>
+  </div>
+  <p class="mut">MOTD: <span id="motdCur">-</span></p>
 </section>
-<section class="card hide" data-s="options"><h2>Options</h2><div id="optForm"></div>
- <div class="row"><div><label>Timezone</label><input id="optTz" placeholder="UTC / Europe/Prague"></div>
- <div><label>ENV extra</label><input id="optEnv" placeholder="JAVA_OPTS=..."></div></div>
- <label>Server icon (64x64 png)</label><input type="file" id="optIcon" accept="image/png">
- <label>CurseForge API key</label><input id="optCF" placeholder="paste key from console.curseforge.com">
- <label>Discord webhook</label><input id="optDiscord" placeholder="https://discord.com/api/webhooks/...">
- <div><button class="act ok" id="optSave">Save (live)</button></div>
+
+<section class="card hide" data-s="options">
+  <h2>Options</h2><div id="optForm"></div>
+  <div class="row"><div><label>Timezone</label><input id="optTz" placeholder="UTC / Europe/Prague"></div><div><label>ENV extra</label><input id="optEnv" placeholder="JAVA_OPTS=..."></div></div>
+  <label>Server icon (64x64 png)</label><input type="file" id="optIcon" accept="image/png">
+  <label>CurseForge API key</label><input id="optCF" placeholder="paste key from console.curseforge.com">
+  <label>Discord webhook</label><input id="optDiscord" placeholder="https://discord.com/api/webhooks/...">
+  <button class="act ok" id="optSave">Save (live)</button>
+  <span class="mut">Saving applies server.properties; restart applies it in the game.</span>
 </section>
-<section class="card hide" data-s="console"><h2>Console (colors)</h2><div id="term"></div>
- <div class="row"><input id="cmd" placeholder="say hello from VoHost..."><button class="act" id="sendCmd">Send</button></div></section>
-<section class="card hide" data-s="log"><h2>Log</h2><button class="act" id="btnLog">Refresh</button><div id="term2" style="background:#0c1219;border-radius:8px;padding:10px;white-space:pre-wrap;max-height:500px;overflow:auto"></div></section>
-<section class="card hide" data-s="players"><h2>Players</h2>
- <div class="row"><input id="plName" placeholder="player name"><select id="plAct"><option value="op">OP</option><option value="deop">De-OP</option><option value="kick">Kick</option><option value="kill">Kill</option><option value="feed">Feed</option><option value="ban">Ban</option><option value="ban-ip">Ban IP</option><option value="tempban">Temp ban</option><option value="pardon">Unban</option><option value="pardon-ip">Unban IP</option></select><input id="plDur" placeholder="7d / 2h / forever (tempban)"><input id="plReason" placeholder="reason"></div>
- <button class="act danger" id="plGo">Apply</button> <span class="mut" id="plOut"></span>
- <h3>Seen / inventory + enderchest</h3><div id="plSeen"></div><div id="plData"></div></section>
-<section class="card hide" data-s="software"><h2>Software</h2>
- <div class="row"><select id="swLoader"></select><select id="swMc"></select><select id="swBuild"></select></div>
- <label><input type="checkbox" id="swEula" style="width:auto"> Accept EULA (Mojang)</label><br>
- <button class="act ok" id="swInstall">Install / Switch</button> <span class="mut" id="swOut"></span></section>
-<section class="card hide" data-s="mods"><h2>Mods</h2><h3>Installed</h3><div id="modInst"></div><button class="act" id="modRef">Refresh installed</button>
- <h3>Browse / install</h3><div class="row"><select id="modSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="modQ" placeholder="search e.g. sodium"><select id="modKind"><option value="mod">mod</option><option value="modpack">modpack</option></select><button class="act" id="modGo">Search</button></div><div id="modList"></div></section>
-<section class="card hide" data-s="plugins"><h2>Plugins</h2><h3>Installed</h3><div id="plgInst"></div><button class="act" id="plgRef">Refresh installed</button>
- <h3>Browse / install</h3><div class="row"><select id="plgSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="plgQ" placeholder="search e.g. Essentials"><button class="act" id="plgGo">Search</button></div><div id="plgList"></div></section>
-<section class="card hide" data-s="files"><h2>Files</h2><div class="row"><input id="fPath" value=""><button class="act" id="fUp">Up</button><button class="act" id="fMk">New folder</button><input type="file" id="fFile" multiple></div><table id="fTable"></table></section>
-<section class="card hide" data-s="worlds"><h2>Worlds</h2><div id="wList"></div>
- <div class="row"><select id="wName"><option>world</option><option>world_nether</option><option>world_the_end</option></select><button class="act" id="wDl">Download zip</button></div>
- <label>Upload zip (replaces old world, auto-extracts, deletes zip leftover)</label><input type="file" id="wUp" accept=".zip"></section>
-<section class="card hide" data-s="backups"><h2>Backups</h2><button class="act ok" id="bkGo">Backup now</button><button class="act" id="bkRef">Refresh</button><div id="bkList"></div></section>
-<section class="card hide" data-s="access"><h2>Access (multi-user)</h2><div id="uList"></div>
- <div class="row"><input id="uName" placeholder="user"><input id="uPass" type="password" placeholder="password"><select id="uRole"><option>viewer</option><option>moderator</option><option>admin</option></select><button class="act" id="uAdd">Add/Update</button></div></section>
+
+<section class="card hide" data-s="console">
+  <h2>Console</h2><div id="term"></div>
+  <div class="row"><input id="cmd" placeholder="type a server command, e.g. say hello"><button class="act" id="sendCmd">Send</button></div>
+</section>
+
+<section class="card hide" data-s="log">
+  <h2>Log</h2><button class="act" id="btnLog">Refresh</button>
+  <div id="term2" style="background:#0c1219;border-radius:8px;padding:10px;white-space:pre-wrap;max-height:500px;overflow:auto"></div>
+</section>
+
+<section class="card hide" data-s="players">
+  <h2>Players</h2>
+  <div class="row">
+    <input id="plName" placeholder="player name">
+    <select id="plAct">
+      <option value="op">OP</option><option value="deop">De-OP</option>
+      <option value="kick">Kick</option><option value="kill">Kill</option>
+      <option value="feed">Feed</option><option value="ban">Ban</option>
+      <option value="ban-ip">Ban IP</option><option value="tempban">Temp ban</option>
+      <option value="pardon">Unban</option><option value="pardon-ip">Unban IP</option>
+    </select>
+    <input id="plDur" placeholder="7d / 2h / forever (tempban)">
+    <input id="plReason" placeholder="reason">
+  </div>
+  <button class="act danger" id="plGo">Apply</button> <span class="mut" id="plOut"></span>
+  <h3>Online</h3><div id="plOnline"></div>
+  <h3>Offline (seen before + inventory)</h3><div id="plSeen"></div><div id="plData"></div>
+</section>
+
+<section class="card hide" data-s="software">
+  <h2>Software</h2>
+  <div class="row"><select id="swLoader"></select><select id="swMc"></select><select id="swBuild"></select></div>
+  <label><input type="checkbox" id="swEula" style="width:auto"> Accept EULA (Mojang)</label><br>
+  <button class="act ok" id="swInstall">Install / Switch</button> <span class="mut" id="swOut"></span>
+  <p class="mut">vanilla, snapshot, fabric, quilt, forge, neoforge, paper, purpur, spigot/bukkit, arclight, modpacks, hytale (manual jar in Files).</p>
+</section>
+
+<section class="card hide" data-s="mods">
+  <h2>Mods</h2>
+  <h3>Installed</h3><div id="modInst"></div><button class="act" id="modRef">Refresh installed</button>
+  <h3>Browse Modrinth / CurseForge</h3>
+  <div class="row"><select id="modSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="modQ" placeholder="search a mod e.g. sodium"><button class="act" id="modGo">Search</button></div>
+  <div id="modList"></div>
+</section>
+
+<section class="card hide" data-s="plugins">
+  <h2>Plugins</h2>
+  <h3>Installed</h3><div id="plgInst"></div><button class="act" id="plgRef">Refresh installed</button>
+  <h3>Browse Modrinth / CurseForge</h3>
+  <div class="row"><select id="plgSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="plgQ" placeholder="search a plugin e.g. Essentials"><button class="act" id="plgGo">Search</button></div>
+  <div id="plgList"></div>
+</section>
+
+<section class="card hide" data-s="files">
+  <h2>Files</h2>
+  <div class="row"><input id="fPath" value=""><button class="act" id="fUp">Up</button><button class="act" id="fMk">New folder</button><input type="file" id="fFile" multiple></div>
+  <p class="mut">Folders open in place. Files download with the Download button.</p>
+  <table id="fTable"></table>
+</section>
+
+<section class="card hide" data-s="worlds">
+  <h2>Worlds</h2><div id="wList"></div>
+  <div class="row"><select id="wName"><option>world</option><option>world_nether</option><option>world_the_end</option></select><button class="act" id="wDl">Download zip</button></div>
+  <label>Upload zip (replaces the old world, auto-extracts, removes the zip)</label><input type="file" id="wUp" accept=".zip">
+</section>
+
+<section class="card hide" data-s="backups">
+  <h2>Backups</h2><button class="act ok" id="bkGo">Backup now</button><button class="act" id="bkRef">Refresh</button><div id="bkList"></div>
+</section>
+
+<section class="card hide" data-s="access">
+  <h2>Access</h2><div id="uList"></div>
+  <div class="row"><input id="uName" placeholder="user"><input id="uPass" type="password" placeholder="password"><select id="uRole"><option>viewer</option><option>moderator</option><option>admin</option></select><button class="act" id="uAdd">Add / Update</button></div>
+</section>
+
 </main>
 <script src="/assets/app.js"></script></body></html>
