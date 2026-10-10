@@ -64,9 +64,10 @@ function show(tab) {
   document.querySelectorAll("main section").forEach(sec => sec.classList.toggle("hide", sec.dataset.s !== tab));
   ({
     servers: loadServers, server: loadStatus, options: loadOpts, console: nop,
-    log: loadLog, players: loadPlayers, software: loadSw, mods: () => refreshInstBadges(), plugins: () => refreshInstBadges(), files: () => loadFiles(cur), worlds: loadWorlds,
+    log: () => scheduleLog(true), players: loadPlayers, software: loadSw, mods: () => refreshInstBadges(), plugins: () => refreshInstBadges(), files: () => loadFiles(cur), worlds: loadWorlds,
     backups: loadBk, access: loadUsers
   }[tab] || nop)();
+  if (tab !== "log") scheduleLog(false);
 }
 const nop = () => {};
 document.querySelectorAll("#nav button").forEach(b => b.onclick = () => show(b.dataset.t));
@@ -205,8 +206,38 @@ async function sendCmd() {
   } catch (e) { $("#term").innerHTML += "\n" + ansi("[error] " + e.message); }
   $("#cmd").value = "";
 }
-async function loadLog() { try { $("#term2").innerHTML = ansi((await api("/api/logs?lines=400")).log || ""); } catch (e) { $("#term2").textContent = e.message; } }
-$("#btnLog").onclick = loadLog;
+// live log: polls while the Log tab is visible and appends new lines without a refresh click
+let logTimer = null, logCur = "";
+async function loadLog(append) {
+  try {
+    const txt = ((await api("/api/logs?lines=1000")).log) || "";
+    const t = $("#term2"); if (!t) return;
+    const appendable = append && logCur && txt.startsWith(logCur);
+    if (appendable) {
+      const delta = txt.slice(logCur.length);
+      if (delta) {
+        const nearBottom = t.scrollTop + t.clientHeight >= t.scrollHeight - 50;
+        const oldH = t.scrollHeight;
+        t.innerHTML += ansi(delta);
+        if (nearBottom) t.scrollTop = t.scrollHeight;
+        else t.scrollTop += (t.scrollHeight - oldH);
+      }
+    } else {
+      t.innerHTML = ansi(txt);
+      t.scrollTop = t.scrollHeight;
+    }
+    logCur = txt;
+  } catch (e) { /* server polling errors are transient */ }
+}
+function scheduleLog(active) {
+  if (active) {
+    if (!logTimer) logTimer = setInterval(() => loadLog(true), 2500);
+    loadLog(false);
+  } else if (logTimer) {
+    clearInterval(logTimer); logTimer = null;
+  }
+}
+$("#btnLog").onclick = () => { logCur = ""; loadLog(false); };
 
 // ---------- options ----------
 async function loadOpts() {
