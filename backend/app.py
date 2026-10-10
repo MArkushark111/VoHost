@@ -95,6 +95,25 @@ def wan_ip() -> str:
         threading.Thread(target=_wan_fetch, daemon=True).start()
     return _WAN["ip"]
 
+def seed_start_rcon(srv, sdir: Path):
+    """Write RCON keys into server.properties only when the file lacks them,
+    so the panel's RCON always works (password/port match what the server uses)
+    without overruling an explicit user choice (enable-rcon=false in Options)."""
+    try:
+        pp = sdir / "server.properties"
+        raw = pp.read_text(errors="replace") if pp.exists() else ""
+        patch = {}
+        if "enable-rcon" not in raw:
+            patch["enable-rcon"] = "true"
+        if "rcon.password" not in raw:
+            patch["rcon.password"] = "vohost-rcon"
+        if "rcon.port" not in raw:
+            patch["rcon.port"] = str((srv or {}).get("rcon_port", 25575))
+        if patch:
+            OM.write_props(patch, sdir)
+    except Exception:
+        pass
+
 def ensure_server_jar(srv, sdir: Path, sid: str):
     """Download server.jar if missing. Returns ('noop'|'ok', msg|'') or ('err', msg)."""
     jar = sdir / "server.jar"
@@ -263,6 +282,7 @@ def server_act(req: Request, act: str, server_id: str = "", body: dict | None = 
         st, msg = ensure_server_jar(srv, sdir, sid)
         if st == "err":
             return {"ok": False, "crashed": True, "note": msg}
+        seed_start_rcon(srv, sdir)
         res = SM.action(act, server_id=sid, server=srv)
         if st == "ok":
             extra = msg
@@ -653,9 +673,15 @@ def p_online(req: Request, server_id: str = ""):
     need(req, "viewer")
     srv, _ = resolve(req, server_id)
     sid = srv["id"] if srv else ""
+    if not SM.service_active(server_id=sid, server=srv):
+        return {"error": "server is offline - press Start in the Server tab first."}
     r = SM.send_command("list", server_id=sid, server=srv)
     if not r.get("ok"):
-        return {"error": "server offline or RCON disabled (enable-rcon=true in Options, then restart)"}
+        import re as _re
+        err = r.get("error", "")
+        if "timeout" in err.lower() or "refused" in err.lower():
+            return {"error": "RCON not reachable. The panel re-writes enable-rcon + the correct rcon port at Start; re-press Start once, then keep the port in Options matching the Server tab."}
+        return {"error": err}
     out = r.get("out", "")
     import re
     m = re.search(r"There are (\d+) of a max(?: of)? (\d+) players online:?(.*)", out)

@@ -84,12 +84,17 @@ def action(act: str, server_id: str = "", server: dict | None = None) -> dict:
 def _rcon_for(server_id="", server=None):
     _, _, r = _ctx(server_id, server)
     if r:
-        # allow per-server password override from server.properties
+        # allow per-server password/port override from server.properties
         try:
             sdir, _, _ = _ctx(server_id, server)
             for line in (sdir / "server.properties").read_text(errors="replace").splitlines():
                 if line.startswith("rcon.password="):
                     r["password"] = line.split("=", 1)[1]
+                elif line.startswith("rcon.port="):
+                    try:
+                        r["port"] = int(line.split("=", 1)[1])
+                    except Exception:
+                        pass
         except Exception:
             pass
         return r

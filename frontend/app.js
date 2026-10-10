@@ -338,7 +338,7 @@ async function loadOnline() {
     $("#plOnline").textContent = (j.online || []).length
       ? "Online: " + j.online.join(", ")
       : "0 players online";
-  } catch (e) { $("#plOnline").textContent = "server offline or RCON disabled"; }
+  } catch (e) { $("#plOnline").textContent = "couldn't reach the server (is it online?)"; }
 }
 async function loadSeen() {
   try {
