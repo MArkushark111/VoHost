@@ -77,6 +77,16 @@ done
 systemctl daemon-reload
 systemctl enable --now vohost-dashboard
 systemctl enable vohost-mc || true
+# self-test: dashboard must answer on localhost, else dump logs for the user
+sleep 3
+if curl -fs "http://127.0.0.1:$DASH_PORT/" >/dev/null 2>&1; then
+  echo "[VoHost] dashboard OK on :$DASH_PORT"
+else
+  echo "[VoHost] WARN: dashboard not answering on :$DASH_PORT — check below:"
+  systemctl status vohost-dashboard --no-pager -n 5 || true
+  journalctl -u vohost-dashboard -n 30 --no-pager --no-hostname -o cat || true
+  ss -tlnp 2>/dev/null | grep "$DASH_PORT" || echo "(nothing listening on $DASH_PORT)"
+fi
 
 # timezone default
 timedatectl set-timezone UTC 2>/dev/null || true

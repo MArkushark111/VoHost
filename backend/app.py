@@ -15,8 +15,7 @@ from vohost import nbt_players as NP
 from vohost import backups_sched as BK
 from vohost import servers as SV
 
-FRONT = Path(__file__).resolve().parents[1] / ".." / "frontend"
-FRONT = FRONT.resolve()
+FRONT = (Path(__file__).resolve().parent.parent / "frontend").resolve()
 app = FastAPI(title="VoHost")
 
 # ---------- helpers ----------
@@ -595,3 +594,8 @@ def ensure_default_admin():
     pw = A.ensure_admin("admin", os.environ.get("VOHOST_ADMIN_PASS"))
     if pw:
         print(f"[VoHost] default admin created — user=admin pass={pw} (change in Access tab)")
+
+try:
+    ensure_default_admin()
+except Exception as e:
+    print(f"[VoHost] admin bootstrap skipped: {e}")
