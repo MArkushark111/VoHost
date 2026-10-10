@@ -5,18 +5,22 @@ from .config import load_config
 UA = {"User-Agent": "VoHost/1.0"}
 
 def modrinth_search(query, loader=None, mc=None, kind="mod", limit=20):
+    """Search Modrinth. NOTE: never filters by mc-version on the API — unknown/snapshot
+    versions make Modrinth return 400; we filter versions at install time instead."""
     facets = []
     if kind in ("mod", "plugin"):
-        facets.append(f'["project_type:{kind}"]')
-    if loader:
-        facets.append(f'["categories:{loader.lower()}"]')
-    if mc:
-        facets.append(f'["versions:{mc}"]')
+        facets.append(["project_type:" + kind])
+    if loader and loader.lower() in ("fabric", "forge", "quilt", "neoforge", "paper", "purpur", "spigot", "bukkit", "arclight", "modloader"):
+        facets.append(["categories:" + loader.lower()])
     params = {"query": query or "", "limit": limit}
     if facets:
         import json as _j
         params["facets"] = _j.dumps(facets)
     r = requests.get("https://api.modrinth.com/v2/search", params=params, headers=UA, timeout=15)
+    if r.status_code == 400:
+        # retry without facets (e.g. bogus loader value)
+        r = requests.get("https://api.modrinth.com/v2/search",
+                         params={"query": query or "", "limit": limit}, headers=UA, timeout=15)
     r.raise_for_status()
     out = []
     for h in r.json().get("hits", []):
@@ -41,17 +45,22 @@ def curseforge_search(query, kind="mod", mc=None, loader=None, limit=20):
     cfg = load_config()
     key = cfg.get("curseforge_api_key", "")
     if not key:
-        raise RuntimeError("CurseForge API key missing — paste it in Software/Settings (get one at console.curseforge.com).")
+        raise RuntimeError("CurseForge API key missing — paste it in Options (get one at console.curseforge.com).")
     class_map = {"mod": 6, "plugin": 5, "modpack": 4471}
+    ml_map = {"fabric": 4, "forge": 1, "quilt": 5, "neoforge": 6}
     params = {"gameId": 432, "searchFilter": query or "", "pageSize": limit,
               "classId": class_map.get(kind, 6)}
-    if mc:
-        params["gameVersion"] = mc
-    if loader:
-        params["modLoaderType"] = {"fabric": 4, "forge": 1, "quilt": 5, "neoforge": 6}.get(loader.lower(), 0) or None
-        params = {k: v for k, v in params.items() if v}
-    r = requests.get("https://api.curseforge.com/v1/mods/search", params=params,
-                     headers={"x-api-key": key}, timeout=15)
+    # never pass a gameVersion: unknown versions (snapshots) cause 400 and we filter at install
+    if loader and loader.lower() in ml_map:
+        params["modLoaderType"] = ml_map[loader.lower()]
+    headers = {"x-api-key": key}
+    r = requests.get("https://api.curseforge.com/v1/mods/search", params=params, headers=headers, timeout=15)
+    if r.status_code == 400 or r.status_code == 403:
+        r = requests.get("https://api.curseforge.com/v1/mods/search",
+                         params={"gameId": 432, "searchFilter": query or "", "pageSize": limit,
+                                 "classId": class_map.get(kind, 6)}, headers=headers, timeout=15)
+    if r.status_code == 403:
+        raise RuntimeError("CurseForge rejected the API key (403). Check the key in Options; keys look like $2a$10$...")
     r.raise_for_status()
     out = []
     for m in r.json().get("data", []):
