@@ -28,7 +28,13 @@ document.querySelectorAll("#nav button").forEach(b => b.onclick = () => show(b.d
 $("#btnLogin").onclick = async () => {
   const u = prompt("username", "admin"); if (!u) return;
   const p = prompt("password"); if (p === null) return;
-  try { const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, password: p }) }); const j = await r.json(); TOKEN = r.headers.get("x-token") || ""; localStorage.setItem("vohost_tok", TOKEN); $("#me").textContent = j.user.username + " (" + j.user.role + ")"; loadServers(); } catch (e) { alert("login failed: " + e.message); }
+  try {
+    const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, password: p }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert("login failed: " + (j.detail || r.status)); return; }
+    TOKEN = r.headers.get("x-token") || ""; localStorage.setItem("vohost_tok", TOKEN);
+    $("#me").textContent = (j.user || {}).username + " (" + (j.user || {}).role + ")"; loadServers();
+  } catch (e) { alert("login error: " + e.message); }
 };
 // servers
 async function loadServers() {
