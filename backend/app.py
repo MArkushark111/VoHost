@@ -591,9 +591,19 @@ def index():
     return "<h1>VoHost</h1><p>frontend/ missing</p>"
 
 def ensure_default_admin():
-    pw = A.ensure_admin("admin", os.environ.get("VOHOST_ADMIN_PASS"))
-    if pw:
-        print(f"[VoHost] default admin created — user=admin pass={pw} (change in Access tab)")
+    """Create admin once. Password priority: VOHOST_ADMIN_PASS env -> /opt/vohost/data/.admin-pass -> generated.
+    Always persists the final password to data/.admin-pass so it matches every boot."""
+    pw = os.environ.get("VOHOST_ADMIN_PASS")
+    pw_file = DATA / ".admin-pass"
+    if not pw and pw_file.exists():
+        pw = pw_file.read_text().strip() or None
+    created_pw = A.ensure_admin("admin", pw)
+    if created_pw:
+        try:
+            pw_file.write_text(created_pw + "\n")
+        except Exception:
+            pass
+        print(f"[VoHost] default admin created — user=admin pass={created_pw} (saved in data/.admin-pass)")
 
 try:
     ensure_default_admin()
