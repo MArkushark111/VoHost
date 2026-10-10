@@ -100,6 +100,12 @@ $("#nsGo").onclick = async () => {
   } catch (e) { $("#nsOut").textContent = e.message; }
 };
 
+window.copyIp = id => {
+  const el = document.getElementById(id); if (!el) return;
+  const v = (el.textContent || "").trim();
+  if (!v || v === "-" || v === "fetching..." || v === "fetching WAN...") { alert("Address not available yet."); return; }
+  (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => alert("Copied: " + v)).catch(() => { const t = document.createElement("textarea"); t.value = v; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); alert("Copied: " + v); });
+};
 // ---------- server panel ----------
 let hist = [];
 async function loadStatus() {
@@ -113,6 +119,14 @@ async function loadStatus() {
     const soft = s.software || {};
     $("#mSoft").textContent = (soft.loader || "vanilla") + " " + (soft.mc_version || "");
     $("#netSel").value = s.network_mode || "wan";
+    const ip = s.ip || {};
+    $("#mLan").textContent = ip.lan || "-";
+    $("#mWan").textContent = ip.wan || "fetching...";
+    const mport = (s.props && s.props["server-port"]) || ((s.server || {}).port) || "25565";
+    let conn = "";
+    if (s.network_mode === "lan") conn = ip.lan ? ip.lan + ":" + mport : "fetching...";
+    else conn = ip.wan && ip.wan !== "-" ? ip.wan + ":" + mport : "fetching WAN...";
+    $("#mConn").textContent = conn;
     if (CURSRV && (!CURSRV.loader) && soft.loader) { CURSRV.loader = soft.loader; setLoaderUI(); }
     if (CURSRV && soft.mc_version && (!CURSRV.mc_version || CURSRV.mc_version === "latest")) { CURSRV.mc_version = soft.mc_version; }
     hist.push(s.cpu); if (hist.length > 60) hist.shift(); drawGraph();

@@ -1,5 +1,5 @@
 """VoHost dashboard backend — FastAPI, multi-server, WAN/LAN, installed mods + uninstall."""
-import os, json, shutil, zipfile, base64, time, subprocess
+import os, json, shutil, zipfile, base64, time, subprocess, socket, threading
 from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
@@ -53,6 +53,47 @@ def safe_join(base: Path, rel: str) -> Path:
     if base.resolve() not in p.parents and p != base.resolve():
         raise HTTPException(400, "path escapes server dir")
     return p
+
+# ---------- machine IP / WAN (background-refreshed) ----------
+_WAN = {"ip": "", "ts": 0.0, "busy": False}
+_WAN_FILE = DATA / "wan_ip.json"
+_WAN_TTL = 6 * 3600
+
+def lan_ip() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+def _wan_fetch():
+    try:
+        import requests as R
+        _WAN["ip"] = R.get("https://api.ipify.org", timeout=8).text.strip()
+        _WAN_FILE.write_text(json.dumps({"ip": _WAN["ip"], "ts": time.time()}))
+    except Exception:
+        _WAN["ip"] = _WAN.get("ip", "") or ""
+    finally:
+        _WAN["ts"] = time.time()
+        _WAN["busy"] = False
+
+def wan_ip() -> str:
+    if _WAN["ip"] and (time.time() - _WAN["ts"]) < _WAN_TTL:
+        return _WAN["ip"]
+    if not _WAN["busy"]:
+        try:
+            cached = json.loads(_WAN_FILE.read_text())
+            if cached.get("ip") and (time.time() - cached.get("ts", 0)) < _WAN_TTL:
+                _WAN.update({"ip": cached["ip"], "ts": cached["ts"]})
+                return cached["ip"]
+        except Exception:
+            pass
+        _WAN["busy"] = True
+        threading.Thread(target=_wan_fetch, daemon=True).start()
+    return _WAN["ip"]
 
 def ensure_server_jar(srv, sdir: Path, sid: str):
     """Download server.jar if missing. Returns ('noop'|'ok', msg|'') or ('err', msg)."""
@@ -205,7 +246,8 @@ def status(req: Request, server_id: str = ""):
         except Exception:
             pass
     return {**m, "props": {k: props.get(k) for k in ("motd", "max-players", "server-port")},
-            "software": soft, "server": srv, "network_mode": props.get("_network_mode", (srv or {}).get("network_mode", "wan"))}
+            "software": soft, "server": srv, "network_mode": props.get("_network_mode", (srv or {}).get("network_mode", "wan")),
+            "ip": {"lan": lan_ip(), "wan": wan_ip()}}
 
 @app.post("/api/server/{act}")
 def server_act(req: Request, act: str, server_id: str = "", body: dict | None = None):

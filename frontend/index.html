@@ -33,6 +33,7 @@
 <section class="card hide" data-s="server">
   <h2>Server <span class="mut" id="curSrv"></span></h2>
   <div class="row"><div>Loader: <b id="mSoft">-</b></div><div>Network: <b id="mNet">-</b></div><div>Port: <b id="mPort">-</b></div><div>CPU: <b id="mCpu">-</b></div><div>RAM: <b id="mRam">-</b></div><div>Status: <b id="mOn">-</b></div><div>TPS: <b id="mTps">-</b></div></div>
+  <div class="row"><div>LAN IP: <b id="mLan">-</b> <button class="act mini" onclick="copyIp('mLan')">Copy</button></div><div>WAN IP: <b id="mWan">-</b> <button class="act mini" onclick="copyIp('mWan')">Copy</button></div><div>Connect: <b id="mConn">-</b> <button class="act mini" onclick="copyIp('mConn')">Copy</button></div></div>
   <canvas id="graph" width="900" height="120" style="width:100%;background:#0c1219;border-radius:8px"></canvas>
   <div>
     <button class="act ok" data-a="start">Start</button>
