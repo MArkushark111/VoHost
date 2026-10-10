@@ -65,7 +65,7 @@
 </section>
 
 <section class="card hide" data-s="log">
-  <h2>Log</h2><button class="act" id="btnLog">Refresh</button>
+  <h2>Log</h2><button class="act" id="btnLog">Refresh</button><button class="act" id="btnCrash">Full crash report</button>
   <div id="term2" style="background:#0c1219;border-radius:8px;padding:10px;white-space:pre-wrap;max-height:500px;overflow:auto"></div>
 </section>
 
@@ -143,6 +143,14 @@
     <div class="row"><input id="instFilter" placeholder="filter by file name"><button class="act" id="instRef">Refresh</button></div>
     <p class="mut" id="instCount"></p>
     <div id="instList" style="max-height:50vh;overflow:auto"></div>
+  </div>
+</div>
+
+<!-- full crash report viewer -->
+<div class="overlay hide" id="crashModal">
+  <div class="modal">
+    <div class="row"><h3 id="crashTitle">Crash report</h3><select id="crashPick"></select><button class="act" id="crashClose">Close</button></div>
+    <pre id="crashBody" style="background:#0c1219;border-radius:8px;padding:10px;max-height:60vh;overflow:auto;white-space:pre-wrap;font-size:12px"></pre>
   </div>
 </div>
 

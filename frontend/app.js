@@ -210,7 +210,7 @@ async function sendCmd() {
 let logTimer = null, logCur = "";
 async function loadLog(append) {
   try {
-    const txt = ((await api("/api/logs?lines=1000")).log) || "";
+    const txt = ((await api("/api/logs?lines=2000")).log) || "";
     const t = $("#term2"); if (!t) return;
     const appendable = append && logCur && txt.startsWith(logCur);
     if (appendable) {
@@ -238,6 +238,29 @@ function scheduleLog(active) {
   }
 }
 $("#btnLog").onclick = () => { logCur = ""; loadLog(false); };
+$("#btnCrash").onclick = openCrash;
+async function openCrash() {
+  try {
+    const j = await api("/api/crash-reports");
+    const reports = j.reports || [];
+    const sel = $("#crashPick");
+    sel.innerHTML = reports.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
+    if (!reports.length) { $("#crashTitle").textContent = "Crash reports"; $("#crashBody").textContent = "No crash reports found (the server never got far enough to write one, or it started fine)."; return; }
+    $("#crashModal").classList.remove("hide");
+    await showCrash(reports[0]);
+  } catch (e) { toast(e.message, "error"); }
+}
+async function showCrash(f) {
+  try {
+    const j = await api("/api/crash-reports?file=" + encodeURIComponent(f));
+    $("#crashTitle").textContent = "Crash report - " + j.file;
+    $("#crashBody").textContent = j.text;
+    $("#crashModal").classList.remove("hide");
+  } catch (e) { toast(e.message, "error"); }
+}
+$("#crashPick").onchange = () => { const f = $("#crashPick").value; if (f) showCrash(f); };
+$("#crashClose").onclick = () => $("#crashModal").classList.add("hide");
+$("#crashModal").onclick = e => { if (e.target.id === "crashModal") $("#crashModal").classList.add("hide"); };
 
 // ---------- options ----------
 async function loadOpts() {

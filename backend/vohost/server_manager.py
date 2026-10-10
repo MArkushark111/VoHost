@@ -60,7 +60,7 @@ def action(act: str, server_id: str = "", server: dict | None = None) -> dict:
         if not service_active(server_id, server):
             res["ok"] = False
             res["crashed"] = True
-            res["note"] = "Server exited right after start. Last log lines:\n" + tail_log(50, server_id, server)[-2500:]
+            res["note"] = "Server exited right after start. Last log lines:\n" + tail_log(400, server_id, server)[-20000:]
         return res
     if act == "stop":
         r = _run(["sudo", "-n", "systemctl", "stop", unit])

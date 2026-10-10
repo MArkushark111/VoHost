@@ -276,7 +276,21 @@ def server_act(req: Request, act: str, server_id: str = "", body: dict | None = 
 def logs(req: Request, lines: int = 300, server_id: str = ""):
     need(req, "viewer")
     srv, _ = resolve(req, server_id)
-    return {"log": SM.tail_log(lines, server_id=srv["id"] if srv else "", server=srv)}
+    return {"log": SM.tail_log(min(lines, 5000), server_id=srv["id"] if srv else "", server=srv)}
+
+@app.get("/api/crash-reports")
+def crash_reports(req: Request, server_id: str = "", file: str = ""):
+    """List the server's crash-reports/*.txt (newest first) or return one full report."""
+    need(req, "viewer")
+    _, sdir = resolve(req, server_id)
+    cr = sdir / "crash-reports"
+    if file:
+        p = safe_join(cr, file)
+        if not p.exists():
+            raise HTTPException(404, "crash report not found")
+        return {"file": p.name, "text": p.read_text(errors="replace")}
+    files = sorted(cr.glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True) if cr.exists() else []
+    return {"reports": [f.name for f in files[:20]]}
 
 @app.get("/api/metrics")
 def metrics(req: Request, server_id: str = ""):
