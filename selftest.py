@@ -161,6 +161,28 @@ r = c.get("/api/rcon/diag?server_id=" + sid)
 check("rcon diag healthy", r.status_code == 200 and r.json().get("auth", {}).get("ok") is True
       and "healthy" in r.json().get("suggestion", ""), r.text)
 
+# 4f. software switch: backup -> download -> wipe (world/mods/jar gone, config kept)
+(sd / "world").mkdir(exist_ok=True)
+(sd / "world" / "level.dat").write_bytes(b"fake-level")
+(sd / "mods").mkdir(exist_ok=True)
+(sd / "mods" / "a.jar").write_bytes(b"fake-mod")
+(sd / "server.jar").write_bytes(b"fake-jar")
+(sd / "eula.txt").write_text("eula=true\n")
+r = c.post("/api/backups", json={"server_id": sid, "label": "pre-switch"})
+bkfile = r.json().get("file", "")
+check("pre-switch backup created", r.status_code == 200 and bkfile.endswith(".zip"), r.text)
+r = c.get("/api/backups/download?file=" + bkfile + "&server_id=" + sid)
+check("backup downloads as zip", r.status_code == 200 and "zip" in r.headers.get("content-type", ""), ascii(r.text[:200]))
+r = c.get("/api/backups/download?file=../app.py&server_id=" + sid)
+check("backup download traversal rejected", r.status_code == 404, r.text[:200])
+r = c.post("/api/software/install", json={"server_id": sid, "loader": "fabric", "mc_version": "1.21.4",
+                                           "loader_version": "latest", "wipe": True})
+check("software switch with wipe ok", r.status_code == 200 and "Wiped the server folder" in r.json().get("note", ""), r.text[:300])
+check("wipe removed world/mods/jar", not (sd / "world").exists() and not (sd / "mods").exists()
+      and not (sd / "server.jar").exists(), "leftovers present")
+check("wipe kept server.properties+eula", (sd / "server.properties").exists() and (sd / "eula.txt").exists(),
+      "config files missing")
+
 r = c.get("/"); check("index page", r.status_code == 200 and "VoHost" in r.text, r.text[:100])
 r = c.get("/assets/app.js"); check("assets js", r.status_code == 200, r.text[:60])
 r = c.get("/assets/style.css"); check("assets css", r.status_code == 200, r.text[:40])

@@ -113,6 +113,29 @@ def delete_server(sid: str, wipe: bool = False):
         pass
     return {"ok": True}
 
+# files wiped on a software switch (world, jar, mods, logs...) - everything else
+# in the server folder is deleted; these stay so ports and settings survive
+WIPE_KEEP = {"server.properties", "eula.txt", ".network_mode", ".timezone", ".env_extra"}
+
+def wipe_dir(sdir) -> int:
+    """Delete everything in a server folder except WIPE_KEEP. Returns entries removed."""
+    base = Path(sdir)
+    if not base.exists():
+        return 0
+    removed = 0
+    for child in list(base.iterdir()):
+        if child.name in WIPE_KEEP:
+            continue
+        try:
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+            removed += 1
+        except Exception:
+            pass
+    return removed
+
 def apply_network_mode(s: dict):
     """WAN = public UFW allow <port>; LAN = allow only from private subnets."""
     port = int(s.get("port", 25565))

@@ -66,6 +66,27 @@ def list_backups(server_id: str = "") -> dict:
     fresh = any(now - b.get("ts", 0) < 7 * 86400 for b in m["backups"])
     return {"backups": rows[:50], "needs_attention": not fresh, "fresh": fresh}
 
+def find_backup(name: str) -> dict | None:
+    """Return the meta entry for a known backup file, else None."""
+    for b in _meta().get("backups", []):
+        if b.get("file") == name:
+            return b
+    return None
+
+def backup_path(name: str) -> Path | None:
+    """Resolve a known backup file inside BACKUPS (None if unknown/escaping/missing)."""
+    if not name or "/" in name or "\\" in name or not name.endswith(".zip"):
+        return None
+    if not find_backup(name):
+        return None
+    p = (BACKUPS / name).resolve()
+    try:
+        if BACKUPS.resolve() not in p.parents and p != BACKUPS.resolve():
+            return None
+    except Exception:
+        return None
+    return p if p.exists() else None
+
 def restore(name: str) -> dict:
     src = BACKUPS / name
     if not src.exists():

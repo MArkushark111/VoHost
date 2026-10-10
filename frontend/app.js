@@ -46,6 +46,17 @@ function ask(msg) {
     ov.addEventListener("click", e => { if (e.target === ov) done(false); });
   });
 }
+function askYN(msg) {
+  return new Promise(res => {
+    const ov = document.createElement("div"); ov.className = "overlay";
+    ov.innerHTML = `<div class="modal" style="max-width:430px"><p style="margin:0 0 14px">${esc(msg)}</p><div class="row"><button class="act ok" data-y="1">Yes</button><button class="act" data-y="0">No</button></div></div>`;
+    document.body.appendChild(ov);
+    const done = v => { ov.remove(); res(v); };
+    ov.querySelector("[data-y='1']").onclick = () => done(true);
+    ov.querySelector("[data-y='0']").onclick = () => done(false);
+    ov.addEventListener("click", e => { if (e.target === ov) done(false); });
+  });
+}
 function askText(title, def, secret) {
   return new Promise(res => {
     const ov = document.createElement("div"); ov.className = "overlay";
@@ -523,9 +534,23 @@ async function loadBuilds() {
 $("#swLoader").onchange = loadBuilds; $("#swMc").onchange = loadBuilds;
 $("#swInstall").onclick = async () => {
   try {
-    const r = await api("/api/software/install", { method: "POST", body: JSON.stringify({ loader: $("#swLoader").value, mc_version: $("#swMc").value, loader_version: $("#swBuild").value, accept_eula: $("#swEula").checked, server_id: SID }) });
+    const loader = $("#swLoader").value, mc = $("#swMc").value;
+    const changed = CURSRV && (CURSRV.loader !== loader || String(CURSRV.mc_version) !== String(mc));
+    let wipe = false;
+    if (changed) {
+      if (await askYN("Back up the world before switching software?")) {
+        $("#swOut").textContent = "Backing up the world...";
+        const b = await api("/api/backups", { method: "POST", body: JSON.stringify({ label: "pre-switch", server_id: SID }) });
+        window.open("/api/backups/download?file=" + encodeURIComponent(b.file) + "&" + qs(), "_blank");
+        toast("Backup saved + downloading: " + b.file, "ok");
+      }
+      if (!(await ask("Switching software will WIPE the server folder (world, mods, jar). Continue?"))) return;
+      wipe = true;
+      $("#swOut").textContent = "Wiping + installing...";
+    }
+    const r = await api("/api/software/install", { method: "POST", body: JSON.stringify({ loader, mc_version: mc, loader_version: $("#swBuild").value, accept_eula: $("#swEula").checked, wipe, server_id: SID }) });
     $("#swOut").textContent = r.note;
-    if (CURSRV) { CURSRV.loader = $("#swLoader").value; CURSRV.mc_version = $("#swMc").value; setLoaderUI(); }
+    if (CURSRV) { CURSRV.loader = loader; CURSRV.mc_version = mc; setLoaderUI(); }
     loadStatus();
   } catch (e) { $("#swOut").textContent = e.message; }
 };
@@ -680,7 +705,7 @@ async function loadBk() {
   try {
     const j = await api("/api/backups");
     const list = j.backups || [];
-    $("#bkList").innerHTML = list.length ? list.map(b => `${esc(b.file)} (${(b.size / 1048576).toFixed(1)} MB) <button class="act" onclick="restore('${esc(b.file)}')">Restore</button>`).join("<br>") : "No backups yet.";
+    $("#bkList").innerHTML = list.length ? list.map(b => `${esc(b.file)} (${(b.size / 1048576).toFixed(1)} MB) <button class="act" onclick="dlBackup('${esc(b.file)}')">Download</button> <button class="act" onclick="restore('${esc(b.file)}')">Restore</button>`).join("<br>") : "No backups yet.";
   } catch (e) { $("#bkList").textContent = e.message; }
   loadBkSched();
 }
@@ -698,6 +723,7 @@ async function loadBkSched() {
       : "Scheduled backups are off.";
   } catch (e) { $("#bkSchedOut").textContent = ""; }
 }
+window.dlBackup = f => window.open("/api/backups/download?file=" + encodeURIComponent(f) + "&" + qs(), "_blank");
 window.restore = async f => { if (!(await ask("Restore backup " + f + "? The current files are overwritten."))) return; try { await api("/api/backups/restore", { method: "POST", body: JSON.stringify({ file: f }) }); toast("Restore done.", "ok"); } catch (e) { toast(e.message, "error"); } };
 $("#bkGo").onclick = async () => { try { await api("/api/backups", { method: "POST", body: "{}" }); toast("Backup created.", "ok"); } catch (e) { toast(e.message, "error"); } loadBk(); };
 $("#bkRef").onclick = loadBk;

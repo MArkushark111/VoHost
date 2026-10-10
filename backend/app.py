@@ -489,15 +489,28 @@ def sw_install(req: Request, body: dict):
     (DATA / f"software-{sid}.json").write_text(json.dumps({**body, "ts": time.time()}, indent=2))
     loader, mc = body.get("loader", "vanilla"), body.get("mc_version", "latest")
     lv = body.get("loader_version", "latest")
+    note = ""
+    if body.get("wipe"):
+        # software switch: stop the server, then wipe the folder (world, jar,
+        # mods, logs...) while keeping ports + settings; install below is fresh
+        if was_online:
+            SM.action("stop", server_id=sid, server=srv)
+            time.sleep(3)
+        removed = SV.wipe_dir(sdir)
+        note += (f"Wiped the server folder ({removed} entries removed; kept "
+                 f"server.properties/eula.txt). Make sure you downloaded a backup first. ")
     hook = BASE / "scripts" / "install-server.sh"
-    note = f"recorded {loader} {mc} build={lv} on {(srv or {}).get('name', sid)}."
+    note += f"recorded {loader} {mc} build={lv} on {(srv or {}).get('name', sid)}."
     hook_ok = False
     if hook.exists():
         env = dict(os.environ, VOHOST_SERVER_DIR=str(sdir), VOHOST_SERVER_ID=sid,
                    VOHOST_BASE=str(BASE.parent if (BASE.parent / "data").exists() else BASE))
-        r = subprocess.run(["bash", str(hook), loader, mc, lv], capture_output=True, text=True, timeout=600, env=env)
-        note += "\n" + (r.stdout + r.stderr)[-4000:]
-        hook_ok = r.returncode == 0 and (sdir / "server.jar").exists()
+        try:
+            r = subprocess.run(["bash", str(hook), loader, mc, lv], capture_output=True, text=True, timeout=600, env=env)
+            note += "\n" + (r.stdout + r.stderr)[-4000:]
+            hook_ok = r.returncode == 0 and (sdir / "server.jar").exists()
+        except Exception as e:
+            note += f"\nInstaller could not run: {e}"
     else:
         note += " (no install-server.sh hook — set jar manually in Files/server.jar)."
     if not (sdir / "server.jar").exists():
@@ -1068,6 +1081,14 @@ def bk_create(req: Request, body: dict | None = None):
 def bk_restore(req: Request, body: dict):
     need(req, "admin")
     return BK.restore(body.get("file", ""))
+
+@app.get("/api/backups/download")
+def bk_download(req: Request, file: str = "", server_id: str = ""):
+    need(req, "moderator")
+    p = BK.backup_path(file)
+    if not p:
+        raise HTTPException(404, "backup not found")
+    return FileResponse(str(p), filename=p.name)
 
 @app.get("/api/backups/settings")
 def bk_settings(req: Request, server_id: str = ""):
