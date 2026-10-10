@@ -595,7 +595,14 @@ def opts_put(req: Request, body: dict):
             cfg[k] = body[k]
     save_config(cfg)
     if body.get("icon_b64"):
-        (sdir / "server-icon.png").write_bytes(base64.b64decode(body["icon_b64"]))
+        raw = base64.b64decode(body["icon_b64"])
+        w = h = None
+        if raw[:8] == b"\x89PNG\r\n\x1a\n" and len(raw) >= 24:
+            import struct
+            w, h = struct.unpack(">II", raw[16:24])
+        if w != 64 or h != 64:
+            raise HTTPException(400, f"server-icon.png must be exactly 64x64 PNG (got {w or '?'}x{h or '?'}) - resize and try again")
+        (sdir / "server-icon.png").write_bytes(raw)
     if "rcon.password" in props and srv:
         pass  # per-server rcon password lives in server.properties; server_manager reads it live
     return {"ok": True, "note": "saved live — restart server to apply server.properties"}

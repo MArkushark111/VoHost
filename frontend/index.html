@@ -48,10 +48,13 @@
 <section class="card hide" data-s="options">
   <h2>Options</h2><div id="optForm"></div>
   <div class="row"><div><label>Timezone</label><input id="optTz" placeholder="UTC / Europe/Prague"></div><div><label>ENV extra</label><input id="optEnv" placeholder="JAVA_OPTS=..."></div></div>
-  <label>Server icon (64x64 png)</label><input type="file" id="optIcon" accept="image/png">
-  <label>CurseForge API key</label><input id="optCF" placeholder="paste key from console.curseforge.com">
+  <label>Server icon (server-icon.png - exactly 64x64, PNG)</label>
+  <div class="row"><input type="file" id="optIcon" accept="image/png"><button class="act ok" id="optIconUp">Upload icon</button></div>
+  <img id="optIconPrev" style="display:none;width:64px;height:64px;image-rendering:pixelated;border:1px solid var(--line);border-radius:5px;margin:6px 0">
+  <span class="mut" id="optIconMsg"></span>
+  <label>CurseForge API key</label><input id="optCF" placeholder="paste key from console.curseforge.com (starts with $2a$10$...)">
   <label>Discord webhook</label><input id="optDiscord" placeholder="https://discord.com/api/webhooks/...">
-  <button class="act ok" id="optSave">Save (live)</button>
+  <button class="act ok" id="optSave">Save all settings</button>
   <span class="mut">Saving applies server.properties; restart applies it in the game.</span>
 </section>
 

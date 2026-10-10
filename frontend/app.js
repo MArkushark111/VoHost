@@ -167,10 +167,22 @@ async function loadOpts() {
     f.innerHTML += `<label>Network (WAN public / LAN only)</label><select data-k="_network_mode"><option value="wan" ${o.network_mode === "wan" ? "selected" : ""}>WAN - public</option><option value="lan" ${o.network_mode === "lan" ? "selected" : ""}>LAN - home only</option></select>`;
     $("#optTz").value = o.timezone || "UTC"; $("#optEnv").value = o.env || "";
     window._iconB64 = "";
-    if (o.icon) f.insertAdjacentHTML("beforeend", `<p>Current icon: <img src="data:image/png;base64,${o.icon}" width="64" height="64"></p>`);
+    $("#optIconPrev").style.display = o.icon ? "" : "none";
+    if (o.icon) $("#optIconPrev").src = "data:image/png;base64," + o.icon;
+    $("#optIconMsg").textContent = o.icon ? "Current icon shown above (64x64). Pick a new one below or upload." : "No icon yet - upload a 64x64 PNG.";
   } catch (e) { $("#optForm").textContent = e.message; }
 }
-$("#optIcon").onchange = e => { const r = new FileReader(); r.onload = () => window._iconB64 = r.result.split(",")[1]; r.readAsDataURL(e.target.files[0]); };
+$("#optIcon").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { window._iconB64 = r.result.split(",")[1]; $("#optIconPrev").src = r.result; $("#optIconPrev").style.display = ""; $("#optIconMsg").textContent = "Selected: " + f.name + " - click Upload icon to save it to the server."; };
+  r.readAsDataURL(f);
+};
+$("#optIconUp").onclick = async () => {
+  if (!window._iconB64) { $("#optIconMsg").textContent = "Pick a PNG first (64x64)."; return; }
+  try { await api("/api/options", { method: "PUT", body: JSON.stringify({ server_id: SID, icon_b64: window._iconB64 }) }); $("#optIconMsg").textContent = "Icon uploaded. Restart the server (or new players will see it on next join)."; }
+  catch (e) { $("#optIconMsg").textContent = e.message; }
+};
 $("#optSave").onclick = async () => {
   const props = {};
   document.querySelectorAll("#optForm [data-k]").forEach(el => { props[el.dataset.k] = el.type === "checkbox" ? String(el.checked) : el.value; });
