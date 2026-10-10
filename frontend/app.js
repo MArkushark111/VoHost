@@ -337,6 +337,7 @@ $("#instClose").onclick = () => $("#instModal").classList.add("hide");
 $("#instRef").onclick = loadInstModal;
 $("#instFilter").oninput = loadInstModal;
 $("#instModal").onclick = e => { if (e.target.id === "instModal") $("#instModal").classList.add("hide"); };
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("#instModal").classList.add("hide"); });
 
 async function search(into, src, q, kind) {
   try {
