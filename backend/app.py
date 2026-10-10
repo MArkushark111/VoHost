@@ -14,6 +14,7 @@ from vohost import options_manager as OM
 from vohost import nbt_players as NP
 from vohost import backups_sched as BK
 from vohost import servers as SV
+from vohost.auth import ensure_admin, upsert_user, list_users, verify, make_token
 
 FRONT = (Path(__file__).resolve().parent.parent / "frontend").resolve()
 app = FastAPI(title="VoHost")
@@ -52,6 +53,37 @@ def safe_join(base: Path, rel: str) -> Path:
     if base.resolve() not in p.parents and p != base.resolve():
         raise HTTPException(400, "path escapes server dir")
     return p
+
+# ---------- setup (first admin) ----------
+def setup_needed() -> bool:
+    try:
+        return len(list_users()) == 0
+    except Exception:
+        return True
+
+@app.get("/api/setup-state")
+def setup_state():
+    return {"needs_setup": setup_needed(), "has_users": not setup_needed()}
+
+@app.post("/api/setup")
+def do_setup(body: dict, response: JSONResponse | None = None):
+    """Create the FIRST user (admin). Rejected once any user exists."""
+    if not setup_needed():
+        raise HTTPException(403, "setup already done — a user exists. Reset via data/.admin-pass + restart.")
+    username = str(body.get("username", "")).strip()
+    password = str(body.get("password", ""))
+    if not username or len(password) < 4:
+        raise HTTPException(400, "username + password (min 4 chars) required")
+    upsert_user(username, password, "admin")
+    try:
+        (DATA / ".admin-pass").write_text(password + "\n")
+    except Exception:
+        pass
+    tok = make_token(username, "admin")
+    resp = JSONResponse({"ok": True, "user": {"username": username, "role": "admin"}})
+    resp.set_cookie("vohost", tok, httponly=True, samesite="lax")
+    resp.headers["x-token"] = tok
+    return resp
 
 # ---------- auth ----------
 @app.post("/api/login")
@@ -590,28 +622,27 @@ def index():
         return idx.read_text()
     return "<h1>VoHost</h1><p>frontend/ missing</p>"
 
-def ensure_default_admin():
-    """Authoritative admin login: if data/.admin-pass exists, admin's password is synced to it EVERY boot.
-    Fallback: VOHOST_ADMIN_PASS env, else generated + persisted to file."""
+def ensure_admin_at_boot():
+    """No phantom users. Behavior:
+    - data/.admin-pass exists  -> sync/upsert that password for 'admin' (deterministic reset).
+    - no users at all          -> do NOT create anything; frontend shows Create-admin setup.
+    - users exist, no file     -> do nothing (they log in as usual / Access tab)."""
     pw_file = DATA / ".admin-pass"
-    pw = None
     if pw_file.exists():
         pw = pw_file.read_text().strip() or None
-    if not pw:
-        pw = os.environ.get("VOHOST_ADMIN_PASS")
-    if pw:
-        A.upsert_user("admin", pw, "admin")  # upsert = create or RESET to this password
-        print("[VoHost] admin password synced from data/.admin-pass")
-    else:
-        created_pw = A.ensure_admin("admin", None)
-        if created_pw:
+        if pw:
             try:
-                pw_file.write_text(created_pw + "\n")
-            except Exception:
-                pass
-            print(f"[VoHost] default admin created — user=admin pass={created_pw} (saved in data/.admin-pass)")
+                upsert_user("admin", pw, "admin")
+                print("[VoHost] admin password synced from data/.admin-pass")
+                return
+            except Exception as e:
+                print(f"[VoHost] sync failed: {e}")
+    if not setup_needed():
+        print(f"[VoHost] {len(list_users())} user(s) exist, no .admin-pass sync — log in normally.")
+    else:
+        print("[VoHost] no users — waiting for first-run setup (POST /api/setup from UI)")
 
 try:
-    ensure_default_admin()
+    ensure_admin_at_boot()
 except Exception as e:
     print(f"[VoHost] admin bootstrap skipped: {e}")

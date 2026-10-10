@@ -25,15 +25,40 @@ function show(t) {
   if (t === "players") loadSeen(); if (t === "mods") loadInstalled("mod"); if (t === "plugins") loadInstalled("plugin");
 }
 document.querySelectorAll("#nav button").forEach(b => b.onclick = () => show(b.dataset.t));
+async function checkSetup() {
+  try {
+    const r = await fetch("/api/setup-state"); const j = await r.json();
+    if (j.needs_setup) {
+      $("#btnLogin").textContent = "Create admin";
+      $("#me").textContent = "no users yet — create the first account";
+    } else {
+      $("#btnLogin").textContent = "Login";
+    }
+  } catch (e) { /* logged out state */ }
+}
+checkSetup();
 $("#btnLogin").onclick = async () => {
-  const u = prompt("username", "admin"); if (!u) return;
+  // first-run: create admin when no users exist
+  let j;
+  try { j = await (await fetch("/api/setup-state")).json(); } catch (e) { j = { needs_setup: false }; }
+  if (j.needs_setup) {
+    const u = prompt("Create admin — username", "admin"); if (!u) return;
+    const p = prompt("Create admin — password (min 4 chars)"); if (!p) return;
+    const c = prompt("repeat password"); if (c !== p) { alert("passwords differ"); return; }
+    const r = await fetch("/api/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, password: p }) });
+    const jj = await r.json().catch(() => ({}));
+    if (!r.ok) { alert("setup failed: " + (jj.detail || r.status)); return; }
+    TOKEN = r.headers.get("x-token") || ""; localStorage.setItem("vohost_tok", TOKEN);
+    $("#btnLogin").textContent = "Login"; loadServers(); return;
+  }
+  const u = prompt("username", ""); if (!u) return;
   const p = prompt("password"); if (p === null) return;
   try {
     const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: u, password: p }) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) { alert("login failed: " + (j.detail || r.status)); return; }
+    const jj = await r.json().catch(() => ({}));
+    if (!r.ok) { alert("login failed: " + (jj.detail || r.status)); return; }
     TOKEN = r.headers.get("x-token") || ""; localStorage.setItem("vohost_tok", TOKEN);
-    $("#me").textContent = (j.user || {}).username + " (" + (j.user || {}).role + ")"; loadServers();
+    $("#me").textContent = (jj.user || {}).username + " (" + (jj.user || {}).role + ")"; loadServers();
   } catch (e) { alert("login error: " + e.message); }
 };
 // servers
