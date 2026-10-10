@@ -82,6 +82,85 @@ check("item clear missing player 404", r.status_code == 404, r.text)
 r = c.put("/api/options", json={"server_id": sid, "props": {"keepInventory": "true", "enable-command-block": "true"}})
 check("keepInventory toggle saved", r.status_code == 200, r.text)
 
+# 4d. usernames resolve via usercache.json even with no bukkit NBT tag (vanilla/Fabric)
+from vohost.servers import server_dir as _sdir
+import nbtlib
+from nbtlib.tag import Compound, List, Int, String, Byte
+sd = _sdir(sid)
+(pd := sd / "world" / "playerdata").mkdir(parents=True, exist_ok=True)
+puuid = "54aaa8c9-aa2e-4d12-be3e-6f7691913855"
+_nf = nbtlib.File(Compound({"Health": Int(20)}), gzipped=True)
+_nf["Inventory"] = List[Compound]([Compound({"id": String("minecraft:dirt"), "Count": Byte(3), "Slot": Int(0)})])
+_nf.save(str(pd / (puuid + ".dat")))
+(sd / "usercache.json").write_text(json.dumps([{"name": "Markusha111", "uuid": puuid}]))
+r = c.get("/api/players/seen?server_id=" + sid)
+names = {p["uuid"]: p.get("name") for p in r.json().get("players", [])}
+check("seen resolves usercache name", names.get(puuid) == "Markusha111", r.text)
+r = c.get("/api/players/data?uuid=" + puuid + "&server_id=" + sid)
+check("profile resolves usercache name", r.json().get("name") == "Markusha111", r.text)
+
+# 4e. fake RCON server: proves the framing fix (used to fail 'auth read failed:
+# timed out') and that a leading '/' is stripped before sending
+import socket as _s, struct as _st, threading as _th
+box = {}
+fsrv = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+fsrv.setsockopt(_s.SOL_SOCKET, _s.SO_REUSEADDR, 1)
+fsrv.bind(("127.0.0.1", 0)); fsrv.listen(5)
+fport = fsrv.getsockname()[1]
+def _fake():
+    try:
+        for _ in range(5):
+            try:
+                cc, _ = fsrv.accept()
+            except Exception:
+                return
+            cc.settimeout(8)
+            try:
+                hdr = cc.recv(12)
+                if len(hdr) < 12:
+                    cc.close()  # tcp probe: connect+close, no data
+                    continue
+                ln, rid, typ = _st.unpack("<iii", hdr)
+                body = b""
+                while len(body) < ln - 8:
+                    ch = cc.recv(ln - 8 - len(body))
+                    if not ch:
+                        break
+                    body += ch
+                cc.sendall(_st.pack("<iii", 10, rid, 2) + b"\x00\x00")
+                hdr2 = cc.recv(12)
+                ln2, rid2, typ2 = _st.unpack("<iii", hdr2)
+                body2 = b""
+                while len(body2) < ln2 - 8:
+                    ch = cc.recv(ln2 - 8 - len(body2))
+                    if not ch:
+                        break
+                    body2 += ch
+                box["cmd"] = body2[:-2].decode()
+                out = ("got:" + box["cmd"]).encode() + b"\x00\x00"
+                cc.sendall(_st.pack("<iii", len(out) + 8, rid2, 0) + out)
+            except Exception as e:
+                box.setdefault("err", str(e))
+            try:
+                cc.close()
+            except Exception:
+                pass
+    finally:
+        try:
+            fsrv.close()
+        except Exception:
+            pass
+_th.Thread(target=_fake, daemon=True).start()
+(sd / "server.properties").write_text(
+    f"enable-rcon=true\nrcon.port={fport}\nrcon.password=vohost-rcon\nserver-port=25565\n")
+import vohost.server_manager as _SM
+r = _SM.send_command("/gamemode creative Markusha111", server_id=sid)
+check("rcon roundtrip + slash stripped", r.get("ok") is True and box.get("cmd") == "gamemode creative Markusha111",
+      json.dumps(r) + " " + json.dumps(box))
+r = c.get("/api/rcon/diag?server_id=" + sid)
+check("rcon diag healthy", r.status_code == 200 and r.json().get("auth", {}).get("ok") is True
+      and "healthy" in r.json().get("suggestion", ""), r.text)
+
 r = c.get("/"); check("index page", r.status_code == 200 and "VoHost" in r.text, r.text[:100])
 r = c.get("/assets/app.js"); check("assets js", r.status_code == 200, r.text[:60])
 r = c.get("/assets/style.css"); check("assets css", r.status_code == 200, r.text[:40])

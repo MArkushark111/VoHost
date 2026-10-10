@@ -222,6 +222,23 @@ function connectWS() {
 }
 connectWS();
 $("#sendCmd").onclick = sendCmd;
+$("#testRcon").onclick = async () => {
+  const t = $("#term");
+  t.innerHTML += ansi("[rcon] testing...") + "\n"; t.scrollTop = t.scrollHeight;
+  try {
+    const j = await api("/api/rcon/diag");
+    const L = [
+      "target: " + j.target.host + ":" + j.target.port + " (password from " + j.target.password_source + ")",
+      "server.properties: enable-rcon=" + (j.props["enable-rcon"] || "?") + " rcon.port=" + (j.props["rcon.port"] || "?") + " game-port=" + (j.props["server-port"] || "?"),
+      "tcp rcon-port: " + (j.tcp_rcon.open ? "OPEN" : "CLOSED (" + (j.tcp_rcon.error || "?") + ")"),
+      "tcp game-port: " + (j.tcp_game.open ? "OPEN" : "CLOSED"),
+      "auth test: " + (j.auth.ok ? "OK (" + (j.auth.out || "").slice(0, 120) + ")" : "FAILED: " + (j.auth.error || "?")),
+      "fix: " + j.suggestion,
+    ];
+    t.innerHTML += ansi(L.join("\n")) + "\n";
+  } catch (e) { t.innerHTML += ansi("[rcon] " + e.message) + "\n"; }
+  t.scrollTop = t.scrollHeight;
+};
 $("#cmd").addEventListener("keydown", e => { if (e.key === "Enter") sendCmd(); });
 async function sendCmd() {
   const c = $("#cmd").value; if (!c) return;

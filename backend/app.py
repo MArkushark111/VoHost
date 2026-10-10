@@ -178,6 +178,21 @@ def seed_start_rcon(srv, sdir: Path):
             patch["rcon.password"] = "vohost-rcon"
         if "rcon.port" not in raw:
             patch["rcon.port"] = str((srv or {}).get("rcon_port", 25575))
+        else:
+            # repair: rcon.port must never equal the game port (the server then
+            # cannot bind RCON and the panel ends up talking to the game port,
+            # which accepts TCP but never answers RCON -> auth timeout)
+            try:
+                game = rp = None
+                for line in raw.splitlines():
+                    if line.startswith("server-port="):
+                        game = line.split("=", 1)[1].strip()
+                    elif line.startswith("rcon.port="):
+                        rp = line.split("=", 1)[1].strip()
+                if rp and game and rp == game:
+                    patch["rcon.port"] = str((srv or {}).get("rcon_port", 25575))
+            except Exception:
+                pass
         if patch:
             OM.write_props(patch, sdir)
     except Exception:
@@ -386,6 +401,13 @@ def metrics(req: Request, server_id: str = ""):
     need(req, "viewer")
     srv, _ = resolve(req, server_id)
     return SM.metrics(server_id=srv["id"] if srv else "", server=srv)
+
+@app.get("/api/rcon/diag")
+def rcon_diag(req: Request, server_id: str = ""):
+    """One-click RCON health report for the Console tab's Test RCON button."""
+    need(req, "moderator")
+    srv, _ = resolve(req, server_id)
+    return SM.rcon_diag(server_id=srv["id"] if srv else "", server=srv)
 
 @app.websocket("/ws/console")
 async def ws_console(ws: WebSocket, token: str = "", server_id: str = ""):

@@ -1,14 +1,33 @@
 """Player inventory / enderchest inspection + editing via NBT (nbtlib). Multi-server aware.
 
-Vanilla stores each player in world/playerdata/<uuid>.dat. The username lives in the
-root "bukkit" compound (lastKnownName) that even vanilla writes since 1.16.2, so we
-resolve real usernames instead of showing raw UUIDs.
+Vanilla stores each player in world/playerdata/<uuid>.dat. Usernames are resolved
+from usercache.json first (works on vanilla/Fabric/Paper alike), then the NBT
+'bukkit.lastKnownName' tag (Bukkit-family servers), then ops/whitelist entries.
 """
 from pathlib import Path
 from .config import SERVER_DIR
 
 def _base(sdir=None) -> Path:
     return Path(sdir) if sdir else SERVER_DIR
+
+def _uuid_norm(u) -> str:
+    return str(u or "").replace("-", "").lower()
+
+def _usercache_map(sdir=None) -> dict:
+    """uuid_norm -> name from the server's usercache.json (written on every join)."""
+    m = {}
+    try:
+        import json
+        p = _base(sdir) / "usercache.json"
+        if p.exists():
+            for e in json.loads(p.read_text()):
+                u = _uuid_norm(e.get("uuid"))
+                nm = e.get("name") or ""
+                if u and nm and u not in m:
+                    m[u] = nm
+    except Exception:
+        pass
+    return m
 
 def _player_files(sdir=None):
     d = _base(sdir) / "world" / "playerdata"
@@ -28,15 +47,23 @@ def _name_from_dat(f: Path) -> str:
     return ""
 
 def list_players_seen(sdir=None):
-    """Seen players: playerdata files (with resolved usernames) + ops/whitelist names."""
+    """Seen players: playerdata files + usercache.json names + ops/whitelist names."""
     base = _base(sdir)
+    uc = _usercache_map(sdir)
     out = []
     d = base / "world" / "playerdata"
     files = sorted(d.glob("*.dat"), key=lambda p: p.stat().st_mtime, reverse=True) if d.exists() else []
     for f in files[:150]:
         uuid = f.stem
-        out.append({"uuid": uuid, "name": _name_from_dat(f), "file": str(f)})
+        nm = uc.get(_uuid_norm(uuid)) or _name_from_dat(f)
+        out.append({"uuid": uuid, "name": nm, "file": str(f)})
     current = {o["uuid"]: o for o in out}
+    # players known by name but with no .dat yet (never spawned / other world folder)
+    for norm, nm in uc.items():
+        if norm not in {_uuid_norm(o["uuid"]) for o in out}:
+            dashed = f"{norm[0:8]}-{norm[8:12]}-{norm[12:16]}-{norm[16:20]}-{norm[20:32]}" if len(norm) == 32 else norm
+            out.append({"uuid": dashed, "name": nm, "file": ""})
+            current[dashed] = out[-1]
     import json
     for key in ("ops.json", "whitelist.json"):
         p = base / key
@@ -83,6 +110,9 @@ def read_profile(uuid: str, sdir=None):
         return {"error": f"could not read player NBT: {e}"}
     buk = nbt.get("bukkit")
     name = str((buk or {}).get("lastKnownName", "")) or ""
+    if not name:
+        # vanilla/Fabric files carry no name tag - fall back to usercache.json
+        name = _usercache_map(sdir).get(_uuid_norm(uuid), "")
     return {"uuid": uuid, "name": name,
             "Inventory": _slot_list(nbt.get("Inventory", [])),
             "EnderItems": _slot_list(nbt.get("EnderItems", []))}

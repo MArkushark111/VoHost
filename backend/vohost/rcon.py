@@ -22,7 +22,10 @@ def rcon_command(host, port, password, command, timeout=5) -> str:
             raise RCONError("short read")
         (length, rid, typ) = struct.unpack("<iii", hdr)
         body = read_body(sock, length)
-        sock.recv(2)  # trailing nulls
+        # NOTE: read_body already consumed the ENTIRE packet (body + 2 trailing
+        # nulls). Do NOT read further here: vanilla sends exactly one packet per
+        # request, so an extra recv() blocks until timeout ("auth read failed:
+        # timed out") or eats the next packet's bytes.
         # large responses are often split across several packets with the same request id;
         # drain them so the Console/list output isn't truncated
         if length >= 4096:
@@ -39,22 +42,27 @@ def rcon_command(host, port, password, command, timeout=5) -> str:
                     if r2 != rid:
                         break
                     body += read_body(sock, l2)
-                    sock.recv(2)
             except Exception:
                 pass
         return rid, typ, body[:-2].decode("utf8", "replace") if len(body) >= 2 else body.decode("utf8", "replace")
-    s = socket.create_connection((host, port), timeout=timeout)
+    try:
+        s = socket.create_connection((host, port), timeout=timeout)
+    except Exception as e:
+        raise RCONError(f"connect {host}:{port} failed: {e}")
     try:
         s.settimeout(timeout)
         send(s, 1, 3, password)  # SERVERDATA_AUTH
         try:
             rid, typ, _ = recv(s)
         except Exception as e:
-            raise RCONError(f"auth read failed: {e}")
+            raise RCONError(f"auth read failed ({host}:{port}): {e}")
         if rid == -1:
-            raise RCONError("bad rcon password")
+            raise RCONError(f"bad rcon password ({host}:{port})")
         send(s, 2, 2, command)  # SERVERDATA_EXECCOMMAND
-        _, _, out = recv(s)
+        try:
+            _, _, out = recv(s)
+        except Exception as e:
+            raise RCONError(f"command read failed ({host}:{port}): {e}")
         return out
     finally:
         try:
