@@ -66,6 +66,19 @@ echo "[8/8] self-test"
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 if curl -fs "http://127.0.0.1:$PORT/" >/dev/null 2>&1; then
   echo "SUCCESS — open in browser:  http://$IP:$PORT"
+  # login self-test: does the file password actually authenticate?
+  PASS="$(tr -d '\n\r ' < /opt/vohost/data/.admin-pass 2>/dev/null || true)"
+  if [ -n "$PASS" ]; then
+    CODE="$(curl -s -o /tmp/vh-login.json -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/login" -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PASS\"}")"
+    if [ "$CODE" = "200" ]; then
+      echo "LOGIN TEST: admin / \$data/.admin-pass  ->  LOGIN OK"
+    else
+      echo "LOGIN TEST FAILED (HTTP $CODE): $(cat /tmp/vh-login.json 2>/dev/null)"
+      echo "journal check:"; journalctl -u vohost-dashboard -n 5 --no-pager --no-hostname -o cat | grep -i "admin password synced" || echo "  (sync line missing = old dashboard code still running — restart again or re-run repair)"
+    fi
+  else
+    echo "WARN: data/.admin-pass empty/missing — set it:  echo 'YOURPASS' | sudo tee /opt/vohost/data/.admin-pass && sudo systemctl restart vohost-dashboard"
+  fi
 else
   echo "STILL DOWN — paste this output:"
   systemctl status vohost-dashboard --no-pager -n 20 || true
