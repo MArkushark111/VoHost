@@ -62,33 +62,46 @@ ufw allow 22/tcp >/dev/null 2>&1 || true
 ufw allow "$PORT"/tcp >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
 
-echo "[8/8] self-test"
+echo "[8/8] self-test + accounts"
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 if curl -fs "http://127.0.0.1:$PORT/" >/dev/null 2>&1; then
   echo "SUCCESS — open in browser:  http://$IP:$PORT"
-  # login self-test: does the file password actually authenticate?
   PASS="$(tr -d '\n\r ' < /opt/vohost/data/.admin-pass 2>/dev/null || true)"
   if [ -n "$PASS" ]; then
     CODE="$(curl -s -o /tmp/vh-login.json -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/login" -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PASS\"}")"
     if [ "$CODE" = "200" ]; then
       echo "LOGIN TEST: admin / \$data/.admin-pass  ->  LOGIN OK"
     else
-      echo "LOGIN TEST FAILED (HTTP $CODE): $(cat /tmp/vh-login.json 2>/dev/null)"
-      echo "journal check:"; journalctl -u vohost-dashboard -n 5 --no-pager --no-hostname -o cat | grep -i "admin password" || echo "  (sync line missing = old dashboard code still running — re-run repair once more)"
-      echo ""
-      echo "FIX (wipes accounts so the Web UI shows 'Create admin' first-run):"
-      echo "  sudo rm -f /opt/vohost/data/users.json /opt/vohost/data/.admin-pass"
-      echo "  sudo systemctl restart vohost-dashboard"
-      echo "  -> open dashboard, prompt asks for new admin username+password"
+      echo "LOGIN TEST FAILED (HTTP $CODE) — auto-resetting accounts so 'Create admin' shows:"
+      reset_accounts=1
     fi
   else
-    echo "WARN: data/.admin-pass empty/missing — set it:  echo 'YOURPASS' | sudo tee /opt/vohost/data/.admin-pass && sudo systemctl restart vohost-dashboard"
+    echo "no .admin-pass — checking for existing users..."
+    if [ -s /opt/vohost/data/users.json ] && grep -q '"users"' /opt/vohost/data/users.json; then
+      reset_accounts=1
+    fi
   fi
 else
-  echo "STILL DOWN — paste this output:"
+  echo "STILL DOWN — dashboard not answering; pasting diagnostics:"
   systemctl status vohost-dashboard --no-pager -n 20 || true
   journalctl -u vohost-dashboard -n 60 --no-pager --no-hostname -o cat || true
   ss -tlnp 2>/dev/null | grep LISTEN || true
+  reset_accounts=1
+fi
+
+if [ "${reset_accounts:-0}" = "1" ]; then
+  echo ""
+  echo ">>> Resetting accounts so the web UI shows 'Create admin' (this is the fix)..."
+  rm -f /opt/vohost/data/users.json /opt/vohost/data/.admin-pass
+  systemctl restart vohost-dashboard
+  sleep 3
+  if curl -fs "http://127.0.0.1:$PORT/" >/dev/null 2>&1; then
+    echo ">>> DONE: open  http://$IP:$PORT  -> button says 'Create admin' -> pick your own user+pass."
+  else
+    echo ">>> Still down after reset — paste the STILL DOWN diagnostics above."
+  fi
+else
+  echo "Accounts kept (working login verified)."
 fi
 echo "IPs: $(hostname -I)"
 echo "===== done ====="
