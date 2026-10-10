@@ -8,7 +8,9 @@ function qs(extra) { let s = SID ? "server_id=" + encodeURIComponent(SID) : ""; 
 
 async function api(path, opts = {}) {
   let url = path;
-  if (SID && !path.startsWith("/api/servers") && !path.startsWith("/api/login") && !path.startsWith("/api/setup") && !path.startsWith("/api/me") && !/server_id=/.test(path) && !path.includes("?")) url = path + "?" + qs();
+  if (SID && !path.startsWith("/api/servers") && !path.startsWith("/api/login") && !path.startsWith("/api/setup") && !path.startsWith("/api/me") && !path.startsWith("/api/public") && !path.includes("/public/") && !/server_id=/.test(path)) {
+    url = path + (path.includes("?") ? "&" : "?") + "server_id=" + encodeURIComponent(SID);
+  }
   const r = await fetch(url, { ...opts, headers: { ...H(), ...(opts.headers || {}) } });
   const ct = r.headers.get("content-type") || "";
   let body = null;
@@ -142,14 +144,23 @@ window.copyIp = id => {
   if (!v || v === "-" || v === "fetching..." || v === "fetching WAN...") { toast("Address not available yet.", "error"); return; }
   (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => toast("Copied: " + v, "ok")).catch(() => { const t = document.createElement("textarea"); t.value = v; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); toast("Copied: " + v, "ok"); });
 };
+function publicUrl() { return location.origin + "/public/" + SID; }
+$("#pubOpen").onclick = () => { if (!SID) return toast("Select a server first.", "error"); window.open(publicUrl(), "_blank"); };
+$("#pubCopy").onclick = () => {
+  if (!SID) return toast("Select a server first.", "error");
+  const u = publicUrl();
+  (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => toast("Public link copied", "ok")).catch(() => { const t = document.createElement("textarea"); t.value = u; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); toast("Public link copied", "ok"); });
+  $("#pubUrl").textContent = u;
+};
 // ---------- server panel ----------
-let hist = [];
+let histCpu = [], histRam = [];
 async function loadStatus() {
   if (!SID) { document.querySelector("[data-s='servers']").classList.remove("hide"); show("servers"); return; }
   try {
     const s = await api("/api/status");
     $("#mCpu").textContent = s.cpu + " %"; $("#mRam").textContent = s.ram_pct + " %";
     $("#mOn").textContent = s.online ? "ONLINE" : "OFFLINE"; $("#mTps").textContent = s.tps;
+    $("#mMc").textContent = (s.mc_rss_mb ?? "-") + " MB"; $("#mDisk").textContent = (s.disk_pct ?? "-") + " %";
     $("#mNet").textContent = (s.network_mode || "?").toUpperCase(); $("#mPort").textContent = (s.server || {}).port || "?";
     $("#motdCur").textContent = (s.props || {}).motd || "";
     const soft = s.software || {};
@@ -165,11 +176,25 @@ async function loadStatus() {
     $("#mConn").textContent = conn;
     if (CURSRV && (!CURSRV.loader) && soft.loader) { CURSRV.loader = soft.loader; setLoaderUI(); }
     if (CURSRV && soft.mc_version && (!CURSRV.mc_version || CURSRV.mc_version === "latest")) { CURSRV.mc_version = soft.mc_version; }
-    hist.push(s.cpu); if (hist.length > 60) hist.shift(); drawGraph();
+    histCpu.push(s.cpu); histRam.push(s.ram_pct);
+    if (histCpu.length > 60) { histCpu.shift(); histRam.shift(); }
+    if (s.mc_rss_mb != null) $("#mMc").textContent = s.mc_rss_mb + " MB";
+    drawGraph();
     const bk = await api("/api/backups"); $("#bkBadge").style.display = bk.needs_attention ? "" : "none";
   } catch (e) { if (e.status === 401) { $("#mOn").textContent = "login required"; } }
 }
-function drawGraph() { const c = $("#graph"); if (!c) return; const g = c.getContext("2d"); g.clearRect(0, 0, 900, 120); g.strokeStyle = "#3fa7ff"; g.beginPath(); hist.forEach((v, i) => { const x = i * 15, y = 120 - v * 1.2; i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke(); }
+function drawGraph() {
+  const c = $("#graph"); if (!c) return;
+  const g = c.getContext("2d"); g.clearRect(0, 0, 900, 120);
+  const line = (arr, color) => {
+    g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
+    arr.forEach((v, i) => { const x = i * 15, y = 120 - Math.min(v, 100) * 1.2; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+  };
+  line(histRam, "#9b6bff"); line(histCpu, "#3fa7ff");
+  g.fillStyle = "#93a3b5"; g.font = "11px system-ui";
+  g.fillText("CPU", 6, 14); g.fillStyle = "#9b6bff"; g.fillText("RAM", 46, 14);
+}
 document.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
   try {
     const r = await api("/api/server/" + b.dataset.a, { method: "POST", body: "{}" });
@@ -294,6 +319,10 @@ async function loadOpts() {
     $("#optIconPrev").style.display = o.icon ? "" : "none";
     if (o.icon) $("#optIconPrev").src = "data:image/png;base64," + o.icon;
     $("#optIconMsg").textContent = o.icon ? "Current icon shown above (64x64). Pick a new one below or upload." : "No icon yet - upload a 64x64 PNG.";
+    $("#optMemMin").value = (o.memory || {}).min || "1G";
+    $("#optMemMax").value = (o.memory || {}).max || "4G";
+    $("#optCpu").value = o.cpu_cores || 4;
+    $("#optPub").checked = !!o.public_page;
   } catch (e) { $("#optForm").textContent = e.message; }
 }
 $("#optIcon").onchange = e => {
@@ -316,7 +345,7 @@ $("#optSave").onclick = async () => {
   props["online-mode"] = cracked ? "false" : "true";
   props["enforce-secure-profile"] = cracked ? "false" : "true";
   try {
-    await api("/api/options", { method: "PUT", body: JSON.stringify({ props, server_id: SID, timezone: $("#optTz").value, env: $("#optEnv").value, icon_b64: window._iconB64 || undefined, curseforge_api_key: $("#optCF").value || undefined, discord_webhook: $("#optDiscord").value || undefined }) });
+    await api("/api/options", { method: "PUT", body: JSON.stringify({ props, server_id: SID, timezone: $("#optTz").value, env: $("#optEnv").value, icon_b64: window._iconB64 || undefined, curseforge_api_key: $("#optCF").value || undefined, discord_webhook: $("#optDiscord").value || undefined, memory_min: $("#optMemMin").value, memory_max: $("#optMemMax").value, cpu_cores: parseInt($("#optCpu").value || "4", 10), public_page: $("#optPub").checked }) });
     toast("Saved. Restart the server to apply.", "ok");
   } catch (e) { toast(e.message, "error"); }
 };
@@ -329,8 +358,46 @@ $("#plGo").onclick = async () => {
   } catch (e) { $("#plOut").textContent = e.message; }
 };
 async function loadPlayers() {
-  loadOnline(); loadSeen();
+  loadOnline(); loadSeen(); loadLists();
 }
+async function loadLists() {
+  try {
+    const j = await api("/api/players/lists");
+    $("#wlToggle").textContent = "Whitelist: " + (j.whitelist_enabled ? "ON" : "off");
+    $("#wlList").innerHTML = (j.whitelist || []).length
+      ? j.whitelist.map(e => `${esc(e.name || e.uuid || "?")} <button class="act mini danger" onclick="wlRm('${esc(e.name || e.uuid)}')">Remove</button>`).join("<br>")
+      : "Whitelist is empty (whitelist " + (j.whitelist_enabled ? "ON - only these can join" : "off - anyone can join") + ").";
+    const bans = (j.bans || []).map(e => `${esc(e.name || "?")}${e.reason ? " - " + esc(e.reason) : ""} <button class="act mini danger" onclick="wlUnban('${esc(e.name || e.uuid)}')">Unban</button>`).join("<br>");
+    const ips = (j.ban_ips || []).map(e => `${esc(e.ip || "?")} <button class="act mini danger" onclick="wlUnip('${esc(e.ip || "")}')">Unban IP</button>`).join("<br>");
+    $("#banList").innerHTML = [bans, ips].filter(Boolean).join("<br>") || "No bans.";
+  } catch (e) { $("#wlList").textContent = e.message; }
+}
+window.wlRm = async n => { try { await api("/api/players/lists", { method: "POST", body: JSON.stringify({ op: "whitelist-remove", name: n, server_id: SID }) }); toast("Removed from whitelist.", "ok"); } catch (e) { toast(e.message, "error"); } loadLists(); loadSeen(); };
+window.wlUnban = async n => { try { await api("/api/players/lists", { method: "POST", body: JSON.stringify({ op: "ban-remove", name: n, server_id: SID }) }); toast("Unbanned.", "ok"); } catch (e) { toast(e.message, "error"); } loadLists(); };
+window.wlUnip = async n => { try { await api("/api/players/lists", { method: "POST", body: JSON.stringify({ op: "banip-remove", name: n, server_id: SID }) }); toast("IP unbanned.", "ok"); } catch (e) { toast(e.message, "error"); } loadLists(); };
+$("#wlAdd").onclick = async () => {
+  const n = $("#wlName").value.trim(); if (!n) return toast("Enter a player name.", "error");
+  try { const r = await api("/api/players/lists", { method: "POST", body: JSON.stringify({ op: "whitelist-add", name: n, server_id: SID }) }); toast(r.note || "Added to whitelist.", "ok"); }
+  catch (e) { toast(e.message, "error"); }
+  $("#wlName").value = ""; loadLists();
+};
+$("#wlRm").onclick = async () => { const n = $("#wlName").value.trim(); if (n) { await wlRm(n); $("#wlName").value = ""; } };
+$("#wlToggle").onclick = async () => {
+  try {
+    const r = await api("/api/players/lists", { method: "POST", body: JSON.stringify({ op: "toggle-whitelist", server_id: SID }) });
+    $("#wlToggle").textContent = "Whitelist: " + (r.enabled ? "ON" : "off");
+    toast("Whitelist " + (r.enabled ? "enabled" : "disabled") + " (apply takes effect when players re-join or after restart).", "ok");
+    loadLists();
+  } catch (e) { toast(e.message, "error"); }
+};
+$("#banGo").onclick = async () => {
+  const n = $("#banName").value.trim(); if (!n) return toast("Enter a player or IP.", "error");
+  try {
+    const r = await api("/api/players/lists", { method: "POST", body: JSON.stringify({ op: $("#banAct").value, name: n, reason: $("#banReason").value, server_id: SID }) });
+    if (r.ok) toast(r.note || "Done.", "ok"); else toast(r.error || "Failed.", "error");
+  } catch (e) { toast(e.message, "error"); }
+  $("#banName").value = ""; loadLists();
+};
 async function loadOnline() {
   try {
     const j = await api("/api/players/online");
@@ -407,10 +474,18 @@ async function loadInstModal() {
     const f = ($("#instFilter").value || "").toLowerCase();
     const rows = list.filter(m => !f || m.file.toLowerCase().includes(f));
     $("#instList").innerHTML = rows.length
-      ? rows.map(m => `<div class="mod"><div><b>${esc(m.file)}</b> <span class="mut">${(m.size / 1048576).toFixed(2)} MB</span></div><div><button class="act danger" onclick="uninst('${instKind}','${esc(m.file)}')">Uninstall</button></div></div>`).join("")
+      ? rows.map(m => `<div class="mod"><div><b>${esc(m.file)}</b> <span class="mut">${(m.size / 1048576).toFixed(2)} MB</span>${m.update ? ` <span class="badge" style="cursor:default" title="a newer version exists for your MC version">update: ${esc(m.latest)}</span>` : ""}</div><div>${m.update ? `<button class="act" onclick="updMod('${instKind}','${esc(m.file)}')">Update</button>` : ""}<button class="act danger" onclick="uninst('${instKind}','${esc(m.file)}')">Uninstall</button></div></div>`).join("")
       : (f ? "No installed " + (instKind === "mod" ? "mods" : "plugins") + " match that filter." : "Nothing installed yet.");
   } catch (e) { $("#instList").textContent = e.message; }
 }
+window.updMod = async (kind, file) => {
+  if (!(await ask("Update " + file + " to the newest version compatible with your MC version?"))) return;
+  try {
+    const r = await api("/api/catalog/update", { method: "POST", body: JSON.stringify({ kind, file, server_id: SID }) });
+    toast("Updated - " + (r.note || r.file), "ok");
+  } catch (e) { toast(e.message, "error"); }
+  loadInstModal(); refreshInstBadges();
+};
 window.uninst = async (kind, file) => {
   if (!(await ask("Uninstall " + file + "?"))) return;
   try { await api("/api/catalog/uninstall", { method: "POST", body: JSON.stringify({ kind, file, server_id: SID }) }); loadInstModal(); refreshInstBadges(); toast("Removed " + file, "ok"); } catch (e) { toast(e.message, "error"); }
@@ -480,26 +555,83 @@ async function loadFiles(p) {
     if (!items.length) { $("#fTable").innerHTML = "<tr><td class='mut'>empty folder</td></tr>"; return; }
     $("#fTable").innerHTML = items.map(i => i.dir
       ? `<tr><td><a href="#" onclick="openFolder('${esc(i.name)}');return false">${esc(i.name)}/</a></td><td>-</td><td><button class="act" onclick="openFolder('${esc(i.name)}')">Open</button></td></tr>`
-      : `<tr><td>${esc(i.name)}</td><td>${(i.size / 1024).toFixed(1)} KB</td><td><button class="act" onclick="dlFile('${esc(i.name)}')">Download</button> <button class="act danger" onclick="delP('${esc(i.name)}')">Delete</button></td></tr>`).join("");
+      : `<tr><td>${esc(i.name)}</td><td>${(i.size / 1024).toFixed(1)} KB</td><td>${canEdit(i) ? `<button class="act" onclick="editFile('${esc(i.name)}')">Edit</button> ` : ""}<button class="act" onclick="dlFile('${esc(i.name)}')">Download</button> <button class="act danger" onclick="delP('${esc(i.name)}')">Delete</button></td></tr>`).join("");
   } catch (e) { $("#fTable").innerHTML = "<tr><td>" + esc(e.message) + "</td></tr>"; }
 }
 window.openFolder = n => loadFiles(cur ? cur + "/" + n : n);
 window.dlFile = async n => { window.open("/api/files?path=" + encodeURIComponent(cur ? cur + "/" + n : n) + "&" + qs(), "_blank"); };
 window.delP = async n => { if (!(await ask("Delete " + n + "?"))) return; await api("/api/files/delete", { method: "POST", body: JSON.stringify({ path: cur ? cur + "/" + n : n, server_id: SID }) }); loadFiles(cur); };
+const EDIT_EXT = /\.(txt|properties|json|yml|yaml|toml|cfg|conf|sh|xml|md|log|env|ini|list)$/i;
+function canEdit(i) { return !i.dir && EDIT_EXT.test(i.name) && i.size < 512 * 1024; }
+let editPath = "";
+window.editFile = async n => {
+  editPath = cur ? cur + "/" + n : n;
+  try {
+    const j = await api("/api/files/content?path=" + encodeURIComponent(editPath));
+    $("#editTitle").textContent = "Edit " + j.name;
+    $("#editBody").value = j.text;
+    $("#editMsg").textContent = "";
+    $("#editModal").classList.remove("hide");
+  } catch (e) { toast(e.message, "error"); }
+};
+$("#editSave").onclick = async () => {
+  try {
+    await api("/api/files/content", { method: "POST", body: JSON.stringify({ server_id: SID, path: editPath, text: $("#editBody").value }) });
+    toast("Saved " + editPath, "ok");
+    $("#editModal").classList.add("hide");
+  } catch (e) { toast(e.message, "error"); }
+};
+$("#editClose").onclick = () => $("#editModal").classList.add("hide");
+$("#editModal").onclick = e => { if (e.target.id === "editModal") $("#editModal").classList.add("hide"); };
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("#editModal").classList.add("hide"); });
 $("#fUp").onclick = () => loadFiles(cur.split("/").slice(0, -1).join("/"));
 $("#fMk").onclick = async () => { const n = await askText("New folder name"); if (n) { await api("/api/files/mkdir", { method: "POST", body: JSON.stringify({ path: cur ? cur + "/" + n : n, server_id: SID }) }); loadFiles(cur); } };
 $("#fFile").onchange = async e => { for (const f of e.target.files) { const fd = new FormData(); fd.append("file", f); await fetch("/api/files/upload?path=" + encodeURIComponent(cur) + "&" + qs(), { method: "POST", headers: { "x-token": TOKEN }, body: fd }); } loadFiles(cur); };
 
 // ---------- worlds ----------
-async function loadWorlds() { try { const j = await api("/api/worlds"); $("#wList").innerHTML = (j.worlds || []).map(w => `${esc(w.name)} (${(w.size / 1048576).toFixed(1)} MB)`).join("<br>") || "No world yet."; } catch (e) { $("#wList").textContent = e.message; } }
+async function loadWorlds() {
+  try {
+    const j = await api("/api/worlds");
+    $("#wList").innerHTML = (j.worlds || []).map(w => `<div class="mod"><div>${esc(w.name)} (${(w.size / 1048576).toFixed(1)} MB)</div><div><button class="act mini" onclick="dlWorld('${esc(w.name)}')">Download zip</button></div></div>`).join("") || "No world yet.";
+  } catch (e) { $("#wList").textContent = e.message; }
+}
+window.dlWorld = n => window.open("/api/worlds/download?name=" + encodeURIComponent(n) + "&" + qs(), "_blank");
 $("#wDl").onclick = () => window.open("/api/worlds/download?name=" + encodeURIComponent($("#wName").value) + "&" + qs(), "_blank");
 $("#wUp").onchange = async e => { if (!(await ask("Replace the current world with this zip?"))) return; const fd = new FormData(); fd.append("file", e.target.files[0]); try { await fetch("/api/worlds/upload?" + qs(), { method: "POST", headers: { "x-token": TOKEN }, body: fd }); toast("World replaced.", "ok"); } catch (err) { toast(err.message, "error"); } loadWorlds(); };
 
 // ---------- backups / access ----------
-async function loadBk() { try { const j = await api("/api/backups"); const list = j.backups || []; $("#bkList").innerHTML = list.length ? list.map(b => `${esc(b.file)} <button class="act" onclick="restore('${esc(b.file)}')">Restore</button>`).join("<br>") : "No backups yet."; } catch (e) { $("#bkList").textContent = e.message; } }
+async function loadBk() {
+  try {
+    const j = await api("/api/backups");
+    const list = j.backups || [];
+    $("#bkList").innerHTML = list.length ? list.map(b => `${esc(b.file)} (${(b.size / 1048576).toFixed(1)} MB) <button class="act" onclick="restore('${esc(b.file)}')">Restore</button>`).join("<br>") : "No backups yet.";
+  } catch (e) { $("#bkList").textContent = e.message; }
+  loadBkSched();
+}
+async function loadBkSched() {
+  try {
+    const j = await api("/api/backups/settings");
+    const sc = j.schedule || {};
+    $("#bkEnabled").checked = !!sc.enabled;
+    $("#bkMode").value = sc.mode || "daily";
+    $("#bkHour").value = sc.hour != null ? sc.hour : 4;
+    $("#bkMin").value = sc.minute != null ? sc.minute : 0;
+    $("#bkKeep").value = sc.keep || 5;
+    $("#bkSchedOut").textContent = sc.enabled
+      ? `Scheduled ${sc.mode} at ${String(sc.hour).padStart(2, "0")}:${String(sc.minute).padStart(2, "0")}, keeping the newest ${sc.keep}.`
+      : "Scheduled backups are off.";
+  } catch (e) { $("#bkSchedOut").textContent = ""; }
+}
 window.restore = async f => { if (!(await ask("Restore backup " + f + "? The current files are overwritten."))) return; try { await api("/api/backups/restore", { method: "POST", body: JSON.stringify({ file: f }) }); toast("Restore done.", "ok"); } catch (e) { toast(e.message, "error"); } };
 $("#bkGo").onclick = async () => { try { await api("/api/backups", { method: "POST", body: "{}" }); toast("Backup created.", "ok"); } catch (e) { toast(e.message, "error"); } loadBk(); };
 $("#bkRef").onclick = loadBk;
+$("#bkSave").onclick = async () => {
+  try {
+    const r = await api("/api/backups/settings", { method: "PUT", body: JSON.stringify({ server_id: SID, enabled: $("#bkEnabled").checked, mode: $("#bkMode").value, hour: parseInt($("#bkHour").value || "4", 10), minute: parseInt($("#bkMin").value || "0", 10), keep: parseInt($("#bkKeep").value || "5", 10) }) });
+    toast("Schedule saved (" + (r.schedule.enabled ? r.schedule.mode + " at " + r.schedule.hour + ":" + r.schedule.minute : "off") + ").", "ok");
+    loadBkSched();
+  } catch (e) { toast(e.message, "error"); }
+};
 async function loadUsers() { try { const j = await api("/api/users"); $("#uList").innerHTML = (j.users || []).map(u => `${esc(u.username)} (${esc(u.role)}) <button class="act danger" onclick="delU('${esc(u.username)}')">Delete</button>`).join("<br>"); } catch (e) { $("#uList").textContent = e.message; } }
 window.delU = async n => { await api("/api/users/" + n, { method: "DELETE" }); loadUsers(); };
 $("#uAdd").onclick = async () => { try { await api("/api/users", { method: "POST", body: JSON.stringify({ username: $("#uName").value, password: $("#uPass").value, role: $("#uRole").value }) }); toast("User saved.", "ok"); loadUsers(); } catch (e) { toast(e.message, "error"); } };

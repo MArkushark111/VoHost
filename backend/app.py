@@ -1,6 +1,8 @@
 """VoHost dashboard backend — FastAPI, multi-server, WAN/LAN, installed mods + uninstall."""
-import os, json, shutil, zipfile, base64, time, subprocess, socket, threading
+import os, json, shutil, zipfile, base64, time, subprocess, socket, threading, re
+from datetime import datetime
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -53,6 +55,73 @@ def safe_join(base: Path, rel: str) -> Path:
     if base.resolve() not in p.parents and p != base.resolve():
         raise HTTPException(400, "path escapes server dir")
     return p
+
+def sync_server_limits(sid: str):
+    """Write per-server env (MC_MIN/MC_MAX, keeping the installed JAVA) + a systemd drop-in
+    (CPUQuota/MemoryMax) so each server gets its own RAM/CPU limits. Best-effort."""
+    try:
+        s = SV.get_server(sid)
+    except Exception:
+        return
+    env_file = DATA / f"mc-{sid}.env"
+    if sid == "main":
+        env_file = DATA / "mc.env"
+    cur = {}
+    if env_file.exists():
+        for line in env_file.read_text(errors="replace").splitlines():
+            if "=" in line and not line.strip().startswith("#"):
+                k, v = line.split("=", 1)
+                cur[k.strip()] = v.strip()
+    cur["MC_MIN"] = s.get("memory_min", "1G")
+    cur["MC_MAX"] = s.get("memory_max", "4G")
+    try:
+        env_file.write_text("\n".join(f"{k}={v}" for k, v in cur.items()) + "\n")
+    except Exception:
+        pass
+    try:
+        if sid != "main":
+            cores = int(s.get("cpu_cores") or 4)
+            d = Path("/etc/systemd/system") / f"vohost-mc@{sid}.service.d"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "limits.conf").write_text(
+                f"[Service]\nCPUQuota={cores * 100}%\nMemoryMax={s.get('memory_max', '4G')}\n")
+            subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
+    except Exception:
+        pass
+
+def _read_json_list(p: Path) -> list:
+    if not p.exists():
+        return []
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return []
+
+def _write_json_list(p: Path, rows: list):
+    p.write_text(json.dumps(rows, indent=2))
+
+TEXT_EDIT_EXTS = {".txt", ".properties", ".json", ".yml", ".yaml", ".toml", ".cfg",
+                  ".conf", ".sh", ".xml", ".md", ".log", ".env", ".ini", ".list"}
+
+def _update_check(fn, kind, loader, mc):
+    """Returns None (no update) or {slug, number, filename} if a newer Modrinth release exists."""
+    try:
+        slug = MP.slug_from_filename(fn)
+        if not slug:
+            return None
+        latest = MP.latest_for_slug(slug, loader, mc, kind)
+        if not latest or not latest["number"]:
+            return None
+        num = latest["number"].lower()
+        fnl = fn.lower()
+        hit = num in fnl
+        if not hit and "+" in num:
+            hit = num.split("+")[0] in fnl
+        if hit:
+            return None
+        return {"slug": slug, "number": latest["number"], "filename": latest["filename"]}
+    except Exception:
+        return None
 
 # ---------- machine IP / WAN (background-refreshed) ----------
 _WAN = {"ip": "", "ts": 0.0, "busy": False}
@@ -463,7 +532,15 @@ def catalog_versions(req: Request, source: str = "modrinth", project: str = "",
 @app.get("/api/catalog/installed")
 def catalog_installed(req: Request, server_id: str = "", kind: str = ""):
     need(req, "viewer")
-    _, sdir = resolve(req, server_id)
+    srv, sdir = resolve(req, server_id)
+    loader = (srv or {}).get("loader", "")
+    mc = (srv or {}).get("mc_version", "") or ""
+    try:
+        soft = json.loads((DATA / f"software-{srv['id']}.json").read_text())
+        loader = soft.get("loader") or loader
+        mc = soft.get("mc_version") or mc
+    except Exception:
+        pass
     out = []
     for k, folder in (("mod", "mods"), ("plugin", "plugins")):
         if kind and kind != k:
@@ -473,6 +550,17 @@ def catalog_installed(req: Request, server_id: str = "", kind: str = ""):
             for f in sorted(d.iterdir()):
                 if f.is_file():
                     out.append({"kind": k, "file": f.name, "size": f.stat().st_size, "mtime": f.stat().st_mtime})
+    # update badges: check Modrinth for a newer release for each installed file (best-effort)
+    if out:
+        def _chk(ent):
+            try:
+                info = _update_check(ent["file"], ent["kind"], loader, mc)
+                if info:
+                    ent.update(slug=info["slug"], update=True, latest=info["number"], latest_file=info["filename"])
+            except Exception:
+                pass
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            list(ex.map(_chk, out))
     return {"installed": out}
 
 @app.post("/api/catalog/install")
@@ -524,6 +612,43 @@ def catalog_uninstall(req: Request, body: dict):
     p.unlink()
     return {"ok": True, "removed": fn}
 
+@app.post("/api/catalog/update")
+def catalog_update(req: Request, body: dict):
+    """Update an installed mod/plugin to the newest version compatible with the server's MC."""
+    need(req, "moderator")
+    import requests as R
+    srv, sdir = resolve(req, body.get("server_id", ""))
+    kind, fn = body.get("kind", "mod"), body.get("file", "")
+    if not fn or "/" in fn or ".." in fn:
+        raise HTTPException(400, "bad file")
+    destdir = sdir / ("mods" if kind == "mod" else "plugins")
+    old = destdir / fn
+    if not old.exists():
+        raise HTTPException(404, "not installed")
+    slug = MP.slug_from_filename(fn)
+    if not slug:
+        raise HTTPException(400, "could not identify the project from the file name - uninstall + re-add it instead")
+    loader = (srv or {}).get("loader", "")
+    mc = (srv or {}).get("mc_version", "") or ""
+    try:
+        soft = json.loads((DATA / f"software-{srv['id']}.json").read_text())
+        loader = soft.get("loader") or loader
+        mc = soft.get("mc_version") or mc
+    except Exception:
+        pass
+    vs = MP.modrinth_versions(slug, loader, mc, strict=True)
+    if not vs:
+        raise HTTPException(404, f"no compatible version on Modrinth for MC {mc or '?'}")
+    v = vs[0]
+    f0 = v["files"][0]
+    data = R.get(f0["url"], timeout=60).content
+    new = destdir / f0["filename"]
+    if new.exists() and new.name != old.name:
+        new.unlink()
+    new.write_bytes(data)
+    old.unlink(missing_ok=True)
+    return {"ok": True, "file": new.name, "note": f"updated to {v['number']} (restart the server to load it)"}
+
 # ---------- files ----------
 @app.get("/api/files")
 def files(req: Request, path: str = "", server_id: str = ""):
@@ -567,6 +692,29 @@ def rename(req: Request, body: dict):
     dst = safe_join(sdir, body.get("dst", ""))
     src.rename(dst)
     return {"ok": True}
+
+@app.get("/api/files/content")
+def file_content(req: Request, path: str = "", server_id: str = ""):
+    need(req, "viewer")
+    _, sdir = resolve(req, server_id)
+    p = safe_join(sdir, path)
+    if not p.exists() or not p.is_file():
+        raise HTTPException(404, "not a file")
+    if p.stat().st_size > 512 * 1024:
+        raise HTTPException(400, "file too large to edit in the browser (max 512 KB)")
+    return {"name": p.name, "path": path, "size": p.stat().st_size,
+            "editable": p.suffix.lower() in TEXT_EDIT_EXTS,
+            "text": p.read_text(errors="replace")}
+
+@app.post("/api/files/content")
+def file_content_save(req: Request, body: dict):
+    need(req, "moderator")
+    _, sdir = resolve(req, body.get("server_id", ""))
+    p = safe_join(sdir, body.get("path", ""))
+    if not p.exists() or not p.is_file():
+        raise HTTPException(404, "not a file")
+    p.write_text(str(body.get("text", "")))
+    return {"ok": True, "name": p.name, "note": "saved (restart the server to apply configs)"}
 
 @app.post("/api/files/upload")
 async def upload(req: Request, path: str = "", server_id: str = "", file: UploadFile = File(...)):
@@ -706,6 +854,87 @@ def p_data(req: Request, uuid: str, server_id: str = ""):
     _, sdir = resolve(req, server_id)
     return NP.read_inventory(uuid, sdir)
 
+@app.get("/api/players/lists")
+def p_lists(req: Request, server_id: str = ""):
+    """Whitelist + banned players/ips (from the vanilla json files), no server restart needed."""
+    need(req, "viewer")
+    _, sdir = resolve(req, server_id)
+    props = OM.read_props(sdir)
+    return {"whitelist_enabled": (props.get("white-list") or "false") == "true",
+            "whitelist": _read_json_list(sdir / "whitelist.json"),
+            "bans": _read_json_list(sdir / "banned-players.json"),
+            "ban_ips": _read_json_list(sdir / "banned-ips.json")}
+
+@app.post("/api/players/lists")
+def p_lists_put(req: Request, body: dict):
+    need(req, "moderator")
+    srv, sdir = resolve(req, body.get("server_id", ""))
+    sid = srv["id"] if srv else ""
+    online = SM.service_active(server_id=sid, server=srv)
+    op = str(body.get("op", ""))
+    name = str(body.get("name", "")).strip()
+    reason = str(body.get("reason", "") or "").strip()
+    wl = sdir / "whitelist.json"
+    bans = sdir / "banned-players.json"
+    ips = sdir / "banned-ips.json"
+    if op == "toggle-whitelist":
+        cur = (OM.read_props(sdir).get("white-list") or "false") == "true"
+        OM.write_props({"white-list": "false" if cur else "true"}, sdir)
+        if online:
+            SM.send_command("whitelist " + ("off" if cur else "on"), server_id=sid, server=srv)
+            SM.send_command("whitelist reload", server_id=sid, server=srv)
+        return {"ok": True, "enabled": not cur, "note": "whitelist " + ("on" if not cur else "off")}
+    if not name:
+        raise HTTPException(400, "name required")
+    if op == "whitelist-add":
+        if online:
+            SM.send_command(f"whitelist add {name}", server_id=sid, server=srv)
+            SM.send_command("whitelist reload", server_id=sid, server=srv)
+        rows = _read_json_list(wl)
+        if not any(e.get("name", "").lower() == name.lower() for e in rows):
+            rows.append({"uuid": "", "name": name})
+            _write_json_list(wl, rows)
+        return {"ok": True, "note": "whitelisted " + name + (" (UUID fills on next online start)" if not online else "")}
+    if op == "whitelist-remove":
+        if online:
+            SM.send_command(f"whitelist remove {name}", server_id=sid, server=srv)
+            SM.send_command("whitelist reload", server_id=sid, server=srv)
+        _write_json_list(wl, [e for e in _read_json_list(wl) if e.get("name", "").lower() != name.lower()])
+        return {"ok": True, "note": "removed from whitelist"}
+    if op == "ban-add":
+        if online:
+            r = SM.send_command(f"ban {name} {reason}".strip(), server_id=sid, server=srv)
+            if r.get("ok"):
+                return {"ok": True, "note": "banned via RCON"}
+            return {"ok": False, "error": r.get("error"),
+                    "hint": "server online but RCON failed; start the server freshly so RCON is up"}
+        rows = _read_json_list(bans)
+        if not any(e.get("name", "").lower() == name.lower() for e in rows):
+            rows.append({"uuid": "", "name": name, "created": datetime.utcnow().isoformat(),
+                         "source": "VoHost", "expires": "forever", "reason": reason})
+            _write_json_list(bans, rows)
+        return {"ok": True, "note": name + " banned (offline write; start the server so its UUID is set)"}
+    if op == "ban-remove":
+        if online:
+            SM.send_command(f"pardon {name}", server_id=sid, server=srv)
+        _write_json_list(bans, [e for e in _read_json_list(bans) if e.get("name", "").lower() != name.lower()])
+        _write_json_list(ips, [e for e in _read_json_list(ips) if e.get("ip", "") != name])
+        return {"ok": True, "note": "unbanned"}
+    if op == "banip-add":
+        if online:
+            return SM.send_command(f"ban-ip {name} {reason}".strip(), server_id=sid, server=srv)
+        rows = _read_json_list(ips)
+        rows.append({"ip": name, "created": datetime.utcnow().isoformat(),
+                     "source": "VoHost", "expires": "forever", "reason": reason})
+        _write_json_list(ips, rows)
+        return {"ok": True, "note": "ip banned (offline write)"}
+    if op == "banip-remove":
+        if online:
+            SM.send_command(f"pardon-ip {name}", server_id=sid, server=srv)
+        _write_json_list(ips, [e for e in _read_json_list(ips) if e.get("ip", "") != name])
+        return {"ok": True, "note": "ip unbanned"}
+    raise HTTPException(400, "unknown op " + op)
+
 # ---------- options ----------
 @app.get("/api/options")
 def opts(req: Request, server_id: str = ""):
@@ -719,6 +948,9 @@ def opts(req: Request, server_id: str = ""):
             "timezone": props.get("_timezone", "UTC"), "env": props.get("_env", ""),
             "network_mode": props.get("_network_mode", (srv or {}).get("network_mode", "wan")),
             "server": srv,
+            "memory": {"min": (srv or {}).get("memory_min", "1G"), "max": (srv or {}).get("memory_max", "4G")},
+            "cpu_cores": (srv or {}).get("cpu_cores", 4),
+            "public_page": bool(cfg.get("public_page", True)),
             "curseforge_key_set": bool(cfg.get("curseforge_api_key")),
             "discord_set": bool(cfg.get("discord_webhook"))}
 
@@ -734,7 +966,22 @@ def opts_put(req: Request, body: dict):
     for k in ("curseforge_api_key", "discord_webhook", "timezone"):
         if k in body:
             cfg[k] = body[k]
+    if "public_page" in body:
+        cfg["public_page"] = bool(body["public_page"])
     save_config(cfg)
+    if srv:
+        mem_patch = {}
+        for k, default in (("memory_min", "1G"), ("memory_max", "4G")):
+            if k in body and str(body[k] or "").strip():
+                mem_patch[k] = str(body[k]).strip()
+        if "cpu_cores" in body:
+            try:
+                mem_patch["cpu_cores"] = min(max(int(body["cpu_cores"] or 4), 1), 32)
+            except Exception:
+                pass
+        if mem_patch:
+            SV.update_server(srv["id"], mem_patch)
+            sync_server_limits(srv["id"])
     if body.get("icon_b64"):
         raw = base64.b64decode(body["icon_b64"])
         w = h = None
@@ -752,17 +999,43 @@ def opts_put(req: Request, body: dict):
 @app.get("/api/backups")
 def bk_list(req: Request, server_id: str = ""):
     need(req, "viewer")
-    return BK.list_backups()
+    srv, _ = resolve(req, server_id)
+    return BK.list_backups(srv["id"] if srv else "")
 
 @app.post("/api/backups")
 def bk_create(req: Request, body: dict | None = None):
     need(req, "moderator")
-    return BK.create_backup((body or {}).get("label", "manual"))
+    srv, sdir = resolve(req, (body or {}).get("server_id", ""))
+    keep = int(((srv or {}).get("backup") or {}).get("keep") or 5)
+    return BK.create_backup(sdir, (body or {}).get("label", "manual"), keep)
 
 @app.post("/api/backups/restore")
 def bk_restore(req: Request, body: dict):
     need(req, "admin")
     return BK.restore(body.get("file", ""))
+
+@app.get("/api/backups/settings")
+def bk_settings(req: Request, server_id: str = ""):
+    need(req, "viewer")
+    srv, _ = resolve(req, server_id)
+    return {"schedule": (srv or {}).get("backup") or {},
+            "server_id": srv["id"] if srv else ""}
+
+@app.put("/api/backups/settings")
+def bk_settings_put(req: Request, body: dict):
+    need(req, "moderator")
+    srv, _ = resolve(req, body.get("server_id", ""))
+    if not srv:
+        raise HTTPException(400, "no server selected")
+    sc = {
+        "enabled": bool(body.get("enabled")),
+        "mode": "hourly" if body.get("mode") == "hourly" else "daily",
+        "hour": min(max(int(body.get("hour") or 4), 0), 23),
+        "minute": min(max(int(body.get("minute") or 0), 0), 59),
+        "keep": min(max(int(body.get("keep") or 5), 1), 30),
+    }
+    SV.update_server(srv["id"], {"backup": sc})
+    return {"ok": True, "schedule": sc}
 
 @app.get("/api/config")
 def get_cfg(req: Request):
@@ -786,6 +1059,89 @@ def notify(req: Request, body: dict):
         raise HTTPException(400, "discord webhook not set in Options")
     R.post(url, json={"content": body.get("message", "VoHost test")}, timeout=10)
     return {"ok": True}
+
+# ---------- public status page (no login) ----------
+def _public_enabled() -> bool:
+    return bool(load_config().get("public_page", True))
+
+@app.get("/api/public/{sid}")
+def public_api(sid: str):
+    if not _public_enabled():
+        raise HTTPException(404, "public page disabled")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", sid):
+        raise HTTPException(404, "server not found")
+    try:
+        s = SV.get_server(sid)
+    except Exception:
+        raise HTTPException(404, "server not found")
+    if s.get("id") != sid:  # get_server falls back to the first server; never leak that
+        raise HTTPException(404, "server not found")
+    sdir = Path(s.get("dir", ""))
+    online = False
+    try:
+        online = SM.service_active(server=s)
+    except Exception:
+        pass
+    out = {"name": s.get("name"), "id": sid, "online": online,
+           "motd": OM.read_props(sdir).get("motd", ""),
+           "port": s.get("port", 25565), "network_mode": s.get("network_mode", "wan"),
+           "ip": {"lan": lan_ip(), "wan": wan_ip()}, "ts": time.time()}
+    if online:
+        r = SM.send_command("list", server=s)
+        if r.get("ok"):
+            m = re.search(r"There are (\d+) of a max(?: of)? (\d+) players online:?(.*)", r.get("out", ""))
+            if m:
+                out["players"] = {"count": int(m.group(1)), "max": int(m.group(2)),
+                                  "names": [n.strip() for n in m.group(3).split(",") if n.strip()]}
+        try:
+            out["tps"] = SM.metrics(server=s).get("tps")
+        except Exception:
+            pass
+    return out
+
+PUBLIC_HTML = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__SID__ - VoHost status</title>
+<style>body{font-family:system-ui,sans-serif;background:#0f1622;color:#e8eef4;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
+.card{background:#1b2634;border:1px solid #314052;border-radius:14px;padding:26px 34px;text-align:center;max-width:520px;width:92%}
+.pill{display:inline-block;padding:4px 14px;border-radius:20px;font-weight:600}
+.up{background:#1f8a4c;color:#fff}.down{background:#e5484d;color:#fff}
+h1{margin:.4em 0 0;font-size:26px}h2{margin:.2em 0 0;color:#93a3b5;font-weight:normal;font-size:15px}
+.motd{margin:14px 0;color:#93a3b5;font-style:italic}
+.addr{font-family:ui-monospace,Consolas,monospace;background:#0c1219;border-radius:8px;padding:12px;font-size:18px}
+.row{display:flex;gap:20px;justify-content:center;margin-top:16px}.row div{font-size:13px;color:#93a3b5}.row b{display:block;color:#e8eef4;font-size:20px;margin-top:2px}
+.mut{color:#5b6b7d;font-size:12px;margin-top:18px}</style></head><body><div class="card">
+<span class="pill down" id="pill">checking...</span><h1 id="name">...</h1><h2 id="sub"></h2>
+<div class="motd" id="motd"></div><div class="addr" id="addr">-</div>
+<div class="row"><div>Players<b id="pc">-</b></div><div>TPS<b id="tps">-</b></div></div>
+<div class="mut" id="foot"></div></div>
+<script>
+const sid='__SID__';
+async function tick(){try{const j=await (await fetch('/api/public/'+sid)).json();
+document.getElementById('name').textContent=j.name||'?';
+const pill=document.getElementById('pill');pill.textContent=j.online?'ONLINE':'OFFLINE';pill.className='pill '+(j.online?'up':'down');
+document.getElementById('sub').textContent=j.online?('running, '+j.network_mode+' mode'):'server is stopped';
+document.getElementById('motd').textContent=j.motd||'';
+const ip=j.network_mode==='lan'?j.ip.lan:j.ip.wan;document.getElementById('addr').textContent=(ip||'-')+':'+j.port;
+const p=j.players||{};document.getElementById('pc').textContent=(p.count!==undefined)?(p.count+' / '+p.max):'-';
+document.getElementById('tps').textContent=(j.tps!==undefined&&j.tps!==-1)?j.tps:'-';
+document.getElementById('foot').textContent='VoHost status page - updated '+new Date(j.ts*1000).toLocaleTimeString();
+}catch(e){document.getElementById('pill').textContent='unreachable';document.getElementById('pill').className='pill down';}}
+tick();setInterval(tick,10000);
+</script></body></html>"""
+
+@app.get("/public/{sid}", response_class=HTMLResponse)
+def public_page(sid: str):
+    if not _public_enabled():
+        return HTMLResponse("<h1>Public status page is disabled</h1><p>Enable it in Options: Settings - Public status page.</p>")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", sid):
+        return HTMLResponse("<h1>not found</h1>")
+    try:
+        s = SV.get_server(sid)
+        if s.get("id") != sid:
+            return HTMLResponse("<h1>not found</h1>")
+    except Exception:
+        return HTMLResponse("<h1>not found</h1>")
+    return HTMLResponse(PUBLIC_HTML.replace("__SID__", sid))
 
 # ---------- frontend ----------
 if FRONT.exists():
@@ -822,3 +1178,10 @@ try:
     ensure_admin_at_boot()
 except Exception as e:
     print(f"[VoHost] admin bootstrap skipped: {e}")
+
+# background scheduler: due backups (daily/hourly per server)
+try:
+    threading.Thread(target=BK.start_scheduler, daemon=True).start()
+    print("[VoHost] backup scheduler running")
+except Exception as e:
+    print(f"[VoHost] backup scheduler failed to start: {e}")

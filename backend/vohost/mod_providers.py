@@ -1,4 +1,5 @@
 """Modrinth + CurseForge search/install. No key needed for Modrinth; CF key from settings."""
+import re
 import requests
 from .config import load_config
 
@@ -44,7 +45,7 @@ def _mc_pick(vs, mc):
             return pre
     return []
 
-def modrinth_versions(project_id, loader=None, mc=None, strict=False):
+def modrinth_versions(project_id, loader=None, mc=None, strict=False, limit=20):
     r = requests.get(f"https://api.modrinth.com/v2/project/{project_id}/version", headers=UA, timeout=15)
     r.raise_for_status()
     vs = r.json()
@@ -56,7 +57,36 @@ def modrinth_versions(project_id, loader=None, mc=None, strict=False):
     else:
         vs = good or vs
     return [{"id": v["id"], "number": v["version_number"], "mc": v.get("game_versions"),
-             "loaders": v.get("loaders"), "files": v.get("files")} for v in vs[:20]]
+             "loaders": v.get("loaders"), "files": v.get("files")} for v in vs[:limit]]
+
+# ---------- update-badge helpers ----------
+SKIP_TOKENS = {"fabric", "forge", "quilt", "neoforge", "neo", "paper", "spigot", "bukkit",
+               "purpur", "arclight", "modpack", "minecraft", "mc", "universal", "bungee",
+               "velocity", "client", "server", "api", "loader", "the"}
+
+def slug_from_filename(fn: str) -> str:
+    """Best-effort project slug from an installed jar name (Modrinth filenames are <slug>-<loader>-<version>.jar)."""
+    base = fn[:-4] if fn.lower().endswith(".jar") else fn
+    parts = [p for p in re.split(r"[-_]", base) if p]
+    i = 0
+    while i < len(parts) and parts[i].lower() in SKIP_TOKENS:
+        i += 1
+    if i >= len(parts):
+        return ""
+    return parts[i].lower()
+
+def latest_for_slug(slug, loader=None, mc=None, kind="mod"):
+    """Newest compatible Modrinth version for a slug, or None."""
+    try:
+        vs = modrinth_versions(slug, loader, mc, strict=True, limit=3)
+    except Exception:
+        return None
+    if not vs:
+        return None
+    v = vs[0]
+    f0 = (v.get("files") or [{}])[0]
+    return {"number": v["number"], "url": f0.get("url", ""), "filename": f0.get("filename", ""),
+            "mc": v.get("mc")}
 
 def curseforge_latest_file(mod_id, kind="mod", loader=None, mc=None):
     """Pick the newest CurseForge file for this mod that matches loader + game version."""

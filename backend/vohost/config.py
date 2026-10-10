@@ -29,6 +29,7 @@ DEFAULTS = {
     "timezone": "UTC",
     "curseforge_api_key": "",
     "discord_webhook": "",
+    "public_page": True,
     "scheduler": {"auto_restart": "", "auto_backup": "0 4 * * *"},
     "rcon": {"host": "127.0.0.1", "port": 25575, "password": "vohost-rcon"},
 }
