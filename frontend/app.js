@@ -114,6 +114,7 @@ async function loadStatus() {
     $("#mSoft").textContent = (soft.loader || "vanilla") + " " + (soft.mc_version || "");
     $("#netSel").value = s.network_mode || "wan";
     if (CURSRV && (!CURSRV.loader) && soft.loader) { CURSRV.loader = soft.loader; setLoaderUI(); }
+    if (CURSRV && soft.mc_version && (!CURSRV.mc_version || CURSRV.mc_version === "latest")) { CURSRV.mc_version = soft.mc_version; }
     hist.push(s.cpu); if (hist.length > 60) hist.shift(); drawGraph();
     const bk = await api("/api/backups"); $("#bkBadge").style.display = bk.needs_attention ? "" : "none";
   } catch (e) { if (e.status === 401) { $("#mOn").textContent = "login required"; } }
@@ -317,19 +318,10 @@ async function search(into, src, q, kind) {
 }
 window.inst = async (src, id, kind) => {
   try {
-    if (src === "modrinth") {
-      const j = await api("/api/catalog/versions?source=modrinth&project=" + encodeURIComponent(id) + "&mc=" + encodeURIComponent((CURSRV && CURSRV.mc_version) || ""));
-      const vs = j.versions || [];
-      if (!vs.length) { alert("No compatible version found for this server."); return; }
-      const pick = prompt("Choose version number:\n" + vs.map(v => v.number).join("\n"));
-      const v = vs.find(x => x.number === pick) || vs[0];
-      await api("/api/catalog/install", { method: "POST", body: JSON.stringify({ source: "modrinth", kind, project: id, version_id: v.id, mc: (CURSRV && CURSRV.mc_version) || "", server_id: SID }) });
-    } else {
-      const url = prompt("Paste the CurseForge file URL:");
-      if (!url) return;
-      await api("/api/catalog/install", { method: "POST", body: JSON.stringify({ source: "curseforge", kind, project: id, file_url: url, server_id: SID }) });
-    }
-    alert("Installed."); loadInstalled(kind);
+    if (!CURSRV || !CURSRV.mc_version) { alert("Open the Server page first so we know the Minecraft version."); return; }
+    const r = await api("/api/catalog/install", { method: "POST", body: JSON.stringify({ source: src, kind, project: id, mc: (CURSRV.mc_version || "").toString(), loader: (CURSRV.loader || "").toString(), server_id: SID }) });
+    alert("Installed - " + (r.note || r.file) + "\nRestart the server to load it.");
+    loadInstalled(kind);
   } catch (e) { alert(e.message); }
 };
 $("#modGo").onclick = () => search("#modList", $("#modSrc").value, $("#modQ").value, "mod");

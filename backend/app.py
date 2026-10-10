@@ -407,21 +407,33 @@ def catalog_install(req: Request, body: dict):
     source, kind = body.get("source", "modrinth"), body.get("kind", "mod")
     destdir = sdir / ("mods" if kind == "mod" else "plugins")
     destdir.mkdir(exist_ok=True)
+    mc = (body.get("mc") or "").strip()
+    if mc in ("", "latest"):
+        mc = ""  # unknown server version -> no version constraint
+    loader = (body.get("loader") or "").strip()
+    note = ""
     if source == "modrinth":
-        vs = MP.modrinth_versions(body["project"], body.get("loader"), body.get("mc"))
+        vs = MP.modrinth_versions(body["project"], loader, mc, strict=True)
         v = next((x for x in vs if x["id"] == body.get("version_id")), vs[0] if vs else None)
         if not v:
-            raise HTTPException(404, "version not found")
+            raise HTTPException(404, f"No {kind} version compatible with MC {mc or '?'}"
+                                      f"{' / ' + loader if loader else ''} on Modrinth.")
         f0 = v["files"][0]
         data = R.get(f0["url"], timeout=60).content
         (destdir / f0["filename"]).write_bytes(data)
-        return {"ok": True, "file": f0["filename"]}
-    url = body.get("file_url", "")
+        note = f"auto-picked {v['number']} (MC {', '.join(v['mc'][:5])})"
+        return {"ok": True, "file": f0["filename"], "note": note}
+    url = (body.get("file_url") or "").strip()
     if not url:
-        raise HTTPException(400, "file_url required for curseforge")
+        pick = MP.curseforge_latest_file(body["project"], kind, loader, mc)
+        if not pick:
+            raise HTTPException(404, f"No CurseForge file for MC {mc or '?'} / loader {loader or 'any'} "
+                                     f"(file may be installer-only).")
+        url = pick["url"]
+        note = f"auto-picked {pick['name']}"
     fn = url.split("/")[-1].split("?")[0]
     (destdir / fn).write_bytes(R.get(url, timeout=60).content)
-    return {"ok": True, "file": fn}
+    return {"ok": True, "file": fn, "note": note}
 
 @app.post("/api/catalog/uninstall")
 def catalog_uninstall(req: Request, body: dict):

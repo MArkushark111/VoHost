@@ -30,16 +30,65 @@ def modrinth_search(query, loader=None, mc=None, kind="mod", limit=20):
                     "categories": h.get("categories")})
     return out
 
-def modrinth_versions(project_id, loader=None, mc=None):
+def _mc_pick(vs, mc):
+    """Keep versions (newest-first) that match mc: exact game-version match first, then major.minor prefix."""
+    if not mc:
+        return vs
+    exact = [v for v in vs if mc in v.get("game_versions", [])]
+    if exact:
+        return exact
+    prefix = ".".join(mc.split(".")[:2])
+    if prefix != mc:
+        pre = [v for v in vs if prefix in v.get("game_versions", [])]
+        if pre:
+            return pre
+    return []
+
+def modrinth_versions(project_id, loader=None, mc=None, strict=False):
     r = requests.get(f"https://api.modrinth.com/v2/project/{project_id}/version", headers=UA, timeout=15)
     r.raise_for_status()
     vs = r.json()
     if loader:
         vs = [v for v in vs if loader.lower() in [l.lower() for l in v.get("loaders", [])]] or vs
-    if mc:
-        vs = [v for v in vs if mc in v.get("game_versions", [])] or vs
+    good = _mc_pick(vs, mc)
+    if strict:
+        vs = good
+    else:
+        vs = good or vs
     return [{"id": v["id"], "number": v["version_number"], "mc": v.get("game_versions"),
              "loaders": v.get("loaders"), "files": v.get("files")} for v in vs[:20]]
+
+def curseforge_latest_file(mod_id, kind="mod", loader=None, mc=None):
+    """Pick the newest CurseForge file for this mod that matches loader + game version."""
+    cfg = load_config()
+    key = cfg.get("curseforge_api_key", "")
+    if not key:
+        raise RuntimeError("CurseForge API key missing - paste it in Options (get one at console.curseforge.com).")
+    ml_map = {"fabric": 4, "forge": 1, "quilt": 5, "neoforge": 6}
+    headers = {"x-api-key": key}
+    url = f"https://api.curseforge.com/v1/mods/{mod_id}/files"
+    params = {"pageSize": 50}
+    if loader and loader.lower() in ml_map:
+        params["modLoaderType"] = ml_map[loader.lower()]
+    if mc:
+        params["gameVersion"] = mc
+    r = requests.get(url, params=params, headers=headers, timeout=15)
+    if r.status_code in (400, 403, 404) and "gameVersion" in params:
+        params.pop("gameVersion", None)  # snapshot/unknown versions -> retry without
+        r = requests.get(url, params=params, headers=headers, timeout=15)
+    if r.status_code == 403:
+        raise RuntimeError("CurseForge rejected the API key (403). Check the key in Options; keys look like $2a$10$...")
+    r.raise_for_status()
+    files = r.json().get("data", [])
+    if not files:
+        return None
+    files.sort(key=lambda f: f.get("fileDate", ""), reverse=True)  # newest first
+    f = files[0]
+    dl = f.get("downloadUrl") or f.get("fileUrl")
+    if not dl:
+        return None  # files without direct download URLs need the CF installer app
+    return {"fileId": f["id"], "name": f.get("displayName") or f.get("fileName"),
+            "url": dl, "mc": f.get("gameVersions"), "loaders": f.get("modLoaders")}
 
 def curseforge_search(query, kind="mod", mc=None, loader=None, limit=20):
     cfg = load_config()
