@@ -29,15 +29,18 @@ fi
 apt-get update -y
 apt-get install -y python3 python3-venv python3-pip curl wget unzip ufw sudo
 
-# JDKs
-bash "$SRC_DIR/scripts/jdk-setup.sh"
+# JDKs — non-fatal: dashboard works without Java, MC needs it later.
+bash "$SRC_DIR/scripts/jdk-setup.sh" || echo "[VoHost] WARN: JDK setup failed, continuing (install Java later, dashboard still works)"
 
-# layout
+# layout — idempotent: safe on first install AND reinstall (no backend/backend nesting)
 mkdir -p "$DEST" /opt/vohost/{backend,data,logs,backups,server,scripts}
-cp -r "$SRC_DIR/backend" "$DEST/" 2>/dev/null || cp -r "$SRC_DIR/backend/"* "$DEST/backend/"
-cp -r "$SRC_DIR/frontend" "$DEST/" 2>/dev/null || true
-cp "$SRC_DIR/scripts/"*.sh "$DEST/scripts/" 2>/dev/null || cp "$SRC_DIR/scripts/"* "$DEST/scripts/" 2>/dev/null || true
-[ -f "$SRC_DIR/scripts/install-server.sh" ] && cp "$SRC_DIR/scripts/install-server.sh" "$DEST/scripts/" || true
+mkdir -p "$DEST/backend" "$DEST/frontend"
+cp -r "$SRC_DIR/backend/." "$DEST/backend/"
+cp -r "$SRC_DIR/frontend/." "$DEST/frontend/"
+cp "$SRC_DIR/scripts/"*.sh "$DEST/scripts/" || true
+# repair previous nested copies from older installer revisions
+if [ -d "$DEST/backend/backend" ]; then cp -r "$DEST/backend/backend/." "$DEST/backend/"; rm -rf "$DEST/backend/backend"; fi
+if [ -d "$DEST/frontend/frontend" ]; then cp -r "$DEST/frontend/frontend/." "$DEST/frontend/"; rm -rf "$DEST/frontend/frontend"; fi
 chmod +x "$DEST/scripts/"*.sh || true
 
 # CLI shortcuts FIRST — so `vohost` exists even if a later step fails.
@@ -75,8 +78,9 @@ for b in /usr/local/bin /usr/bin; do
   chmod +x "$b/vohost" "$b/vohost-logs" 2>/dev/null || true
 done
 systemctl daemon-reload
-systemctl enable --now vohost-dashboard
+systemctl enable vohost-dashboard || true
 systemctl enable vohost-mc || true
+systemctl restart vohost-dashboard || systemctl start vohost-dashboard || true
 # self-test: dashboard must answer on localhost, else dump logs for the user
 sleep 3
 if curl -fs "http://127.0.0.1:$DASH_PORT/" >/dev/null 2>&1; then
