@@ -40,6 +40,16 @@ cp "$SRC_DIR/scripts/"*.sh "$DEST/scripts/" 2>/dev/null || cp "$SRC_DIR/scripts/
 [ -f "$SRC_DIR/scripts/install-server.sh" ] && cp "$SRC_DIR/scripts/install-server.sh" "$DEST/scripts/" || true
 chmod +x "$DEST/scripts/"*.sh || true
 
+# CLI shortcuts FIRST — so `vohost` exists even if a later step fails.
+# Link into both /usr/local/bin and /usr/bin (/usr/bin is always in PATH).
+for b in /usr/local/bin /usr/bin; do
+  [ -d "$b" ] || continue
+  ln -sf "$DEST/scripts/vohost.sh" "$b/vohost" || true
+  ln -sf "$DEST/scripts/log-window.sh" "$b/vohost-logs" || true
+  chmod +x "$b/vohost" "$b/vohost-logs" 2>/dev/null || true
+done
+hash -r 2>/dev/null || true
+
 # venv
 python3 -m venv "$DEST/venv"
 "$DEST/venv/bin/pip" install --upgrade pip
@@ -57,9 +67,13 @@ DASH_PORT="$DASH_PORT" MC_PORT="$MC_PORT" bash "$DEST/scripts/firewall.sh" "$DAS
 sed "s/--port 8080/--port $DASH_PORT/" "$SRC_DIR/systemd/vohost-dashboard.service" > /etc/systemd/system/vohost-dashboard.service
 cp "$SRC_DIR/systemd/vohost-mc.service" /etc/systemd/system/vohost-mc.service
 cp "$SRC_DIR/systemd/vohost-mc@.service" /etc/systemd/system/vohost-mc@.service
-ln -sf "$DEST/scripts/log-window.sh" /usr/local/bin/vohost-logs
-ln -sf "$DEST/scripts/vohost.sh" /usr/local/bin/vohost
-chmod +x /usr/local/bin/vohost-logs /usr/local/bin/vohost
+# re-assert links at the end too (idempotent repair on every reinstall)
+for b in /usr/local/bin /usr/bin; do
+  [ -d "$b" ] || continue
+  ln -sf "$DEST/scripts/vohost.sh" "$b/vohost" || true
+  ln -sf "$DEST/scripts/log-window.sh" "$b/vohost-logs" || true
+  chmod +x "$b/vohost" "$b/vohost-logs" 2>/dev/null || true
+done
 systemctl daemon-reload
 systemctl enable --now vohost-dashboard
 systemctl enable vohost-mc || true
@@ -77,6 +91,10 @@ echo "Services  : systemctl status vohost-dashboard vohost-mc"
 echo "Logs cmd  : vohost (or vohost-logs) — reopens window, press q to close, server keeps running"
 echo ""
 echo "Opening live log window (q to close)..."
-hash -r || true
-command -v vohost >/dev/null 2>&1 || echo "[VoHost] WARN: /usr/local/bin not in PATH for this shell (try: export PATH=$PATH:/usr/local/bin)"
+hash -r 2>/dev/null || true
+if command -v vohost >/dev/null 2>&1; then
+  echo "[VoHost] CLI check OK: $(command -v vohost) -> $(readlink -f $(command -v vohost))"
+else
+  echo "[VoHost] FATAL: vohost not on PATH (checked /usr/local/bin + /usr/bin). echo \$PATH to debug."
+fi
 bash "$DEST/scripts/log-window.sh" || true
