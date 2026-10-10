@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+*.egg-info/
+# Runtime (created on Ubuntu at install)
+server/
+data/
+logs/
+backups/
+*.log
+# Secrets
+data/.admin-pass
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,6 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+psutil==6.1.1
+requests==2.32.3
+nbtlib==2.0.4
+python-multipart==0.0.20
