@@ -54,6 +54,38 @@ def safe_join(base: Path, rel: str) -> Path:
         raise HTTPException(400, "path escapes server dir")
     return p
 
+def ensure_server_jar(srv, sdir: Path, sid: str):
+    """Download server.jar if missing. Returns ('noop'|'ok', msg|'') or ('err', msg)."""
+    jar = sdir / "server.jar"
+    if jar.exists():
+        return "noop", ""
+    soft = {}
+    for f in (DATA / f"software-{sid}.json", DATA / "software.json"):
+        try:
+            soft = json.loads(f.read_text())
+            break
+        except Exception:
+            pass
+    loader = (soft.get("loader") or (srv or {}).get("loader") or "vanilla")
+    mc = (soft.get("mc_version") or (srv or {}).get("mc_version") or "")
+    lv = (soft.get("loader_version") or "latest")
+    if not mc or mc == "latest":
+        vs = V.mc_versions()
+        mc = vs[0] if vs else "1.21.4"
+    hook = BASE / "scripts" / "install-server.sh"
+    if not hook.exists():
+        return "err", "server.jar is missing and the installer script is absent - re-run repair.sh, or upload server.jar via the Files tab."
+    env = dict(os.environ, VOHOST_SERVER_DIR=str(sdir), VOHOST_SERVER_ID=sid, VOHOST_BASE=str(BASE))
+    try:
+        r = subprocess.run(["bash", str(hook), loader, mc, lv], capture_output=True, text=True, timeout=600, env=env)
+        out = (r.stdout + r.stderr)[-2500:]
+    except Exception as e:
+        return "err", f"jar auto-install crashed: {e}"
+    if not jar.exists():
+        return "err", (f"Auto-install of {loader} {mc} produced no server.jar.\n{out}\n"
+                       "For manual loaders (forge/neoforge/spigot/hytale/modpack) upload the jar/zip in the Files tab.")
+    return "ok", f"Auto-installed {loader} {mc} -> server.jar"
+
 # ---------- setup (first admin) ----------
 def setup_needed() -> bool:
     try:
@@ -178,13 +210,24 @@ def status(req: Request, server_id: str = ""):
 @app.post("/api/server/{act}")
 def server_act(req: Request, act: str, server_id: str = "", body: dict | None = None):
     need(req, "moderator")
-    srv, _ = resolve(req, server_id or (body or {}).get("server_id", ""))
+    srv, sdir = resolve(req, server_id or (body or {}).get("server_id", ""))
     sid = srv["id"] if srv else ""
     if act == "command":
         cmd = (body or {}).get("command", "")
         if not cmd:
             raise HTTPException(400, "empty command")
         return SM.send_command(cmd, server_id=sid, server=srv)
+    if act in ("start", "restart"):
+        st, msg = ensure_server_jar(srv, sdir, sid)
+        if st == "err":
+            return {"ok": False, "crashed": True, "note": msg}
+        res = SM.action(act, server_id=sid, server=srv)
+        if st == "ok":
+            extra = msg
+            if not res.get("ok"):
+                extra += "\n(server still needs fixing - see the log)"
+            res["note"] = extra + "\n" + res.get("note", "")
+        return res
     return SM.action(act, server_id=sid, server=srv)
 
 @app.get("/api/logs")

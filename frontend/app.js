@@ -125,6 +125,8 @@ document.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
     if (r && r.crashed) {
       $("#term").innerHTML += "\n" + ansi("[crash] Server exited immediately - reason:\n" + (r.note || "")) + "\n";
       show("console");
+    } else if (r && r.note) {
+      $("#term").innerHTML += "\n" + ansi("[start] " + r.note) + "\n";
     }
     setTimeout(loadStatus, 1500);
   } catch (e) { alert(e.message); }
