@@ -16,7 +16,6 @@ from vohost import options_manager as OM
 from vohost import nbt_players as NP
 from vohost import backups_sched as BK
 from vohost import duckdns as DD
-from vohost import tunnel as TUN
 from vohost import servers as SV
 from vohost.auth import ensure_admin, upsert_user, list_users, verify, make_token
 
@@ -353,7 +352,6 @@ def status(req: Request, server_id: str = ""):
     return {**m, "props": {k: props.get(k) for k in ("motd", "max-players", "server-port")},
             "software": soft, "server": srv, "network_mode": props.get("_network_mode", (srv or {}).get("network_mode", "wan")),
             "hostname": DD.fqdn((srv or {}).get("duckdns_domain", "")) if DD.normalize_domain((srv or {}).get("duckdns_domain", "")) else "",
-            "tunnel_addr": (srv or {}).get("playit_addr", "") or "",
             "ip": {"lan": lan_ip(), "wan": wan_ip()}}
 
 @app.post("/api/server/{act}")
@@ -1114,41 +1112,6 @@ def dd_put(req: Request, body: dict):
     return {"ok": True, "domain": domain, "hostname": DD.fqdn(domain) if domain else "",
             "token_set": bool(load_config().get("duckdns_token", "")), "sync": sync}
 
-# ---------- playit.gg tunnel (agent runs as root-side service; install needs admin) ----------
-@app.get("/api/tunnel")
-def tun_get(req: Request, server_id: str = ""):
-    need(req, "viewer")
-    srv, _ = resolve(req, server_id)
-    return TUN.status(srv)
-
-@app.post("/api/tunnel")
-def tun_post(req: Request, body: dict):
-    need(req, "admin")
-    body = body or {}
-    act = str(body.get("action", ""))
-    srv, _ = resolve(req, body.get("server_id", ""))
-    if act == "install":
-        return TUN.start_install()
-    if act in ("start", "stop", "restart"):
-        rc, out = TUN._run(["systemctl", act, TUN.UNIT], timeout=90)
-        return {"ok": rc == 0, "out": out[-600:]}
-    if act == "enable":
-        rc, out = TUN._run(["systemctl", "enable", TUN.UNIT], timeout=90)
-        if rc == 0:
-            rc, out = TUN._run(["systemctl", "start", TUN.UNIT], timeout=90)
-        return {"ok": rc == 0, "out": out[-600:]}
-    if act == "claim":
-        return TUN.claim_flow()
-    if act == "save":
-        if not srv:
-            raise HTTPException(404, "no server")
-        raw = str(body.get("addr", "")).strip()
-        if raw and not TUN.valid_addr(raw):
-            raise HTTPException(400, "address must look like host:port (e.g. abc123.playit.gg:45678)")
-        SV.update_server(srv["id"], {"playit_addr": TUN.valid_addr(raw)})
-        return {"ok": True, "addr": TUN.valid_addr(raw)}
-    raise HTTPException(400, "unknown tunnel action")
-
 # ---------- backups / misc ----------
 @app.get("/api/backups")
 def bk_list(req: Request, server_id: str = ""):
@@ -1248,7 +1211,6 @@ def public_api(sid: str):
            "motd": OM.read_props(sdir).get("motd", ""),
            "port": s.get("port", 25565), "network_mode": s.get("network_mode", "wan"),
            "hostname": DD.fqdn(s.get("duckdns_domain", "")) if DD.normalize_domain(s.get("duckdns_domain", "")) else "",
-           "tunnel_addr": s.get("playit_addr", "") or "",
            "ip": {"lan": lan_ip(), "wan": wan_ip()}, "ts": time.time()}
     if online:
         r = SM.send_command("list", server=s)
@@ -1304,7 +1266,7 @@ document.getElementById('name').innerHTML=fmt(j.name)||'?';
 const pill=document.getElementById('pill');pill.textContent=j.online?'ONLINE':'OFFLINE';pill.className='pill '+(j.online?'up':'down');
 document.getElementById('sub').textContent=j.online?('running, '+j.network_mode+' mode'):'server is stopped';
 document.getElementById('motd').innerHTML=fmt(j.motd)||'';
-const ip=j.network_mode==='lan'?j.ip.lan:j.ip.wan;const host=j.tunnel_addr||((j.network_mode!=='lan'&&j.hostname)?j.hostname:ip);document.getElementById('addr').textContent=(host||'-')+((j.tunnel_addr)?'':':'+j.port);
+const ip=j.network_mode==='lan'?j.ip.lan:j.ip.wan;const host=(j.network_mode!=='lan'&&j.hostname)?j.hostname:ip;document.getElementById('addr').textContent=(host||'-')+':'+j.port;
 const p=j.players||{};document.getElementById('pc').textContent=(p.count!==undefined)?(p.count+' / '+p.max):'-';
 document.getElementById('tps').textContent=(j.tps!==undefined&&j.tps!==-1)?j.tps:'-';
 document.getElementById('foot').textContent='VoHost status page - updated '+new Date(j.ts*1000).toLocaleTimeString();

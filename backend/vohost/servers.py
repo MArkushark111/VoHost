@@ -90,7 +90,7 @@ def update_server(sid: str, patch: dict) -> dict:
     for s in db["servers"]:
         if s["id"] == sid:
             for k in ("name", "network_mode", "memory_max", "memory_min", "loader", "mc_version",
-                      "port", "rcon_port", "backup", "cpu_cores", "duckdns_domain", "playit_addr"):
+                      "port", "rcon_port", "backup", "cpu_cores", "duckdns_domain"):
                 if k in patch:
                     s[k] = patch[k]
             _save(db)

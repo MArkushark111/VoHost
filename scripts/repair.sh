@@ -33,7 +33,6 @@ cp "$SRC/systemd/"*.service /tmp/ 2>/dev/null || true
 rm -rf /opt/vohost/backend/backend /opt/vohost/frontend/frontend
 chmod +x /opt/vohost/scripts/*.sh 2>/dev/null || true
 [ -f /opt/vohost/backend/app.py ] && [ -f /opt/vohost/frontend/index.html ] || fail "deploy copy incomplete"
-[ -f /opt/vohost/backend/vohost/tunnel.py ] || warn "tunnel.py missing after copy - old tarball? continuing anyway"
 
 echo "[3/8] python venv + deps"
 if command -v fuser >/dev/null 2>&1; then

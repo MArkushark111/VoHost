@@ -28,4 +28,4 @@ Features:
 - Console: WS terminal with ANSI colors. Log: tail with colors.
 - Backups: manual + cron scheduler + restore (fixes red-warning state)
 - Access: multi-user + roles (admin / moderator / viewer)
-- Scheduler + Discord webhook, EULA prompt, UFW guide, DuckDNS auto-subdomain, playit.gg tunnel (auto-install agent, claim link, per-server public address)
+- Scheduler + Discord webhook, EULA prompt, UFW guide (no tunnel by your choice)
