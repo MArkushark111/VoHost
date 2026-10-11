@@ -1242,6 +1242,14 @@ def public_page(sid: str):
 if FRONT.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONT)), name="assets")
 
+@app.middleware("http")
+async def no_cache_assets(request, call_next):
+    """Browsers can otherwise keep stale cached CSS/JS after a deploy; force revalidate every reload."""
+    response = await call_next(request)
+    if request.url.path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     idx = FRONT / "index.html"

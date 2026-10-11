@@ -190,6 +190,10 @@ check("wipe kept server.properties+eula", (sd / "server.properties").exists() an
 r = c.get("/"); check("index page", r.status_code == 200 and "VoHost" in r.text, r.text[:100])
 r = c.get("/assets/app.js"); check("assets js", r.status_code == 200, r.text[:60])
 r = c.get("/assets/style.css"); check("assets css", r.status_code == 200, r.text[:40])
+check("assets served no-cache", "no-cache" in c.get("/assets/style.css").headers.get("cache-control", "").lower(),
+      c.get("/assets/style.css").headers.get("cache-control", ""))
+_theme = c.get("/assets/style.css").text
+check("theme dark gray (no blue bg)", "#151619" in _theme and "#1b2634" not in _theme, _theme[:120])
 
 # 4g. Minecraft legacy formatting (&c &l &k ...) wired into name/MOTD renders
 _js = A.FRONT.joinpath("app.js").read_text() if A.FRONT.joinpath("app.js").exists() else ""
