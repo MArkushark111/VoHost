@@ -202,9 +202,9 @@ function drawGraph() {
     arr.forEach((v, i) => { const x = i * 15, y = 120 - Math.min(v, 100) * 1.2; i ? g.lineTo(x, y) : g.moveTo(x, y); });
     g.stroke();
   };
-  line(histRam, "#9b6bff"); line(histCpu, "#3fa7ff");
-  g.fillStyle = "#93a3b5"; g.font = "11px system-ui";
-  g.fillText("CPU", 6, 14); g.fillStyle = "#9b6bff"; g.fillText("RAM", 46, 14);
+  line(histRam, "#cfd3d9"); line(histCpu, "#787e88");
+  g.fillStyle = "#787e88"; g.font = "11px system-ui";
+  g.fillText("CPU", 6, 14); g.fillStyle = "#cfd3d9"; g.fillText("RAM", 46, 14);
 }
 document.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
   try {
