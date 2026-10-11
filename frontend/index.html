@@ -41,6 +41,14 @@
     <div class="row"><button class="act ok" id="ddSave">Save + update now</button><span class="mut" id="ddStatus">-</span></div>
     <p class="mut" style="margin:6px 0 0">Get a free token at duckdns.org (log in, copy the token). The first update registers the name if nobody took it. Players then join with <b id="ddAddr">-</b> - the panel re-points it at your IP automatically.</p>
   </div>
+  <div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px">
+    <h3 style="margin:0 0 8px">Tunnel (playit.gg - no port-forward needed)</h3>
+    <div class="row"><span class="mut" id="tunStatus">-</span></div>
+    <div class="row"><button class="act ok" id="tunInstall">Install agent</button><button class="act" id="tunStart">Start</button><button class="act" id="tunStop">Stop</button><button class="act" id="tunClaim">Get claim link</button></div>
+    <div class="row"><span id="tunClaimBox"></span></div>
+    <div class="row"><div><label>Tunnel address from playit.gg (paste host:port)</label><input id="tunAddr" placeholder="abc123.playit.gg:45678" style="max-width:300px"></div><div style="align-self:end"><button class="act ok" id="tunSave">Save address</button></div></div>
+    <p class="mut" style="margin:6px 0 0">Steps: 1) Install + Start, 2) Get claim link - open it and log in to playit.gg, 3) on playit.gg add a TCP tunnel to 127.0.0.1:<span id="tunPort">25565</span>, paste its address above. Players join with that address. Tip: with a tunnel you can switch Network to LAN-only.</p>
+  </div>
   <canvas id="graph" width="900" height="120" style="width:100%;background:#0d0e10;border-radius:8px"></canvas>
   <div>
     <button class="act ok" data-a="start">Start</button>

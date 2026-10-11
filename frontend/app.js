@@ -116,7 +116,7 @@ function show(tab) {
   document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
   document.querySelectorAll("main section").forEach(sec => sec.classList.toggle("hide", sec.dataset.s !== tab));
   ({
-    servers: loadServers, server: () => { loadStatus(); loadDD(); }, options: loadOpts, console: nop,
+    servers: loadServers, server: () => { loadStatus(); loadDD(); loadTunnel(); }, options: loadOpts, console: nop,
     log: () => scheduleLog(true), players: loadPlayers, software: loadSw, mods: () => refreshInstBadges(), plugins: () => refreshInstBadges(), files: () => loadFiles(cur), worlds: loadWorlds,
     backups: loadBk, access: loadUsers
   }[tab] || nop)();
@@ -229,8 +229,10 @@ async function loadStatus() {
     $("#mWan").textContent = ip.wan || "fetching...";
     const mport = (s.props && s.props["server-port"]) || ((s.server || {}).port) || "25565";
     const host = s.hostname || "";
+    const tun = s.tunnel_addr || "";
     let conn = "";
-    if (s.network_mode === "lan") conn = ip.lan ? ip.lan + ":" + mport : "fetching...";
+    if (tun) conn = tun;
+    else if (s.network_mode === "lan") conn = ip.lan ? ip.lan + ":" + mport : "fetching...";
     else if (host) conn = host + ":" + mport;
     else conn = ip.wan && ip.wan !== "-" ? ip.wan + ":" + mport : "fetching WAN...";
     $("#mConn").textContent = conn;
@@ -294,6 +296,43 @@ if (_ddSave) _ddSave.onclick = async () => {
     loadDD(); loadStatus();
   } catch (e) { toast(e.message, "error"); }
 };
+
+// ---------- tunnel (playit.gg) ----------
+async function loadTunnel() {
+  if (!SID || !$("#tunStatus")) return;
+  try {
+    const j = await api("/api/tunnel");
+    const sv = j.service || {};
+    const ins = j.install || {};
+    let st = (j.installed ? "agent installed" : "agent NOT installed") + " - service " + (sv.active || "?") + " - " + (j.claimed ? "claimed" : "not claimed");
+    if (ins.running) st += " - INSTALLING...";
+    else if ((ins.log || []).length && !j.installed) st += " - last install failed (press Install to retry)";
+    $("#tunStatus").textContent = st;
+    if (document.activeElement !== $("#tunAddr")) $("#tunAddr").value = j.addr || "";
+    if ($("#tunPort")) $("#tunPort").textContent = j.mc_port || "25565";
+    if (ins.running) setTimeout(() => { if (!document.querySelector("[data-s='server']").classList.contains("hide")) loadTunnel(); }, 3000);
+  } catch (e) { $("#tunStatus").textContent = e.message; }
+}
+async function tunAct(action, extra) {
+  try {
+    const r = await api("/api/tunnel", { method: "POST", body: JSON.stringify(Object.assign({ action, server_id: SID }, extra || {})) });
+    if (action === "install") { toast(r.note || "Install started.", "ok"); }
+    else if (action === "claim") {
+      const box = $("#tunClaimBox");
+      if (r.claim_url && box) box.innerHTML = `Claim link (open it, log in): <a href="${esc(r.claim_url)}" target="_blank" rel="noopener">${esc(r.claim_url)}</a>`;
+      toast(r.message || "", r.ok ? "ok" : "error");
+    }
+    else if (action === "save") { toast("Tunnel address saved.", "ok"); }
+    else toast((r.out || "").slice(-200) || "done", r.ok === false ? "error" : "ok");
+    loadTunnel(); loadStatus();
+  } catch (e) { toast(e.message, "error"); }
+}
+for (const [id, act] of [["tunInstall", "install"], ["tunStart", "start"], ["tunStop", "stop"], ["tunClaim", "claim"]]) {
+  const b = document.getElementById(id);
+  if (b) b.onclick = () => tunAct(act);
+}
+const _tunSave = $("#tunSave");
+if (_tunSave) _tunSave.onclick = () => tunAct("save", { addr: $("#tunAddr").value });
 setInterval(() => { if (!document.querySelector("[data-s='server']").classList.contains("hide")) loadStatus(); }, 4000);
 
 // ---------- console / log ----------

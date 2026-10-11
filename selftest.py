@@ -1,5 +1,6 @@
 """Boot the real app against a temp VOHOST_BASE and exercise every endpoint the UI calls, no MC required."""
 import os, tempfile, json, sys
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
 tmp = tempfile.mkdtemp(prefix="vh-test-")
 os.environ["VOHOST_BASE"] = tmp
@@ -151,6 +152,60 @@ r = c.put("/api/subdomain", json={"server_id": sid, "domain": "bad name!"})
 check("subdomain invalid rejected", r.status_code == 400, r.text[:120])
 r = c.put("/api/subdomain", json={"server_id": sid, "domain": ""})
 check("subdomain cleared", r.status_code == 200 and r.json().get("domain") == "" and r.json().get("hostname") == "", r.text[:150])
+
+# 4d4. playit.gg tunnel: validation/claim-parse/install flow (all shell calls faked)
+from vohost import tunnel as _TU
+check("tunnel addr validation", _TU.valid_addr("abc123.playit.gg:45678") == "abc123.playit.gg:45678"
+      and _TU.valid_addr("  ") == "" and _TU.valid_addr("bad addr!") == "" and _TU.valid_addr("x" * 200) == "", "")
+check("tunnel claim scrape", _TU._scrape_claim("open https://playit.gg/claim/AbC123_x for setup") == "https://playit.gg/claim/AbC123_x"
+      and _TU._scrape_claim("nothing here") == "", "")
+import tempfile as _tf
+_tdir = _tf.mkdtemp(prefix="vh-tun-")
+_TU.SECRET_FILE = Path(_tdir) / "playit.toml"
+check("tunnel unclaimed when no secret", _TU.claimed() is False, "")
+Path(_TU.SECRET_FILE).write_text('secret = "abcdef1234567890"\n')
+check("tunnel claimed with secret", _TU.claimed() is True, "")
+_calls = []
+def _fake_run(cmd, timeout=60, data=None, env=None):
+    _calls.append(cmd[0])
+    if cmd[:2] == ["gpg", "--version"]:
+        return 0, "gpg 2.4"
+    if cmd[0] == "apt-get":
+        return 0, "apt ok"
+    if cmd[0] == "systemctl":
+        return 0, "active" if cmd[1] in ("is-active", "start", "enable") else "enabled"
+    if cmd[:2] == ["playit", "setup"]:
+        return 0, "claim at https://playit.gg/claim/Test99_q for setup"
+    if cmd[0] == "journalctl":
+        return 0, ""
+    return 0, ""
+_TU._run = _fake_run
+_TU._fetch = lambda url, timeout=30: b"fake-armored-key"
+_TU._dearmor = lambda key: b"DEARMORED"
+_TU.APT_KEY_DST = Path(_tdir) / "playit.gpg"
+_TU.APT_SRC_DST = Path(_tdir) / "playit-cloud.list"
+_TU._do_install()
+_ins = _TU._state().get("install") or {}
+check("tunnel fake install ok", _ins.get("ok") is True and _ins.get("running") is False
+      and "apt-get" in _calls and Path(_TU.APT_KEY_DST).exists(), json.dumps(_ins)[:200])
+Path(_TU.SECRET_FILE).unlink()
+cf = _TU.claim_flow()
+check("tunnel claim flow extracts url", cf.get("claim_url") == "https://playit.gg/claim/Test99_q" and cf.get("claimed") is False, json.dumps(cf)[:200])
+r = c.get("/api/tunnel?server_id=" + sid)
+check("tunnel status endpoint", r.status_code == 200 and "installed" in r.json() and "service" in r.json()
+      and "claimed" in r.json() and "addr" in r.json(), r.text[:150])
+r = c.post("/api/tunnel", json={"server_id": sid, "action": "save", "addr": "abc123.playit.gg:45678"})
+check("tunnel addr save", r.status_code == 200 and r.json().get("addr") == "abc123.playit.gg:45678", r.text[:150])
+r = c.get("/api/status?server_id=" + sid)
+check("status carries tunnel_addr", r.status_code == 200 and r.json().get("tunnel_addr") == "abc123.playit.gg:45678", r.text[:150])
+r = c.get("/api/public/" + sid)
+check("public api carries tunnel_addr", r.status_code == 200 and r.json().get("hostname") == "" and r.json().get("tunnel_addr") == "abc123.playit.gg:45678", r.text[:150])
+r = c.post("/api/tunnel", json={"server_id": sid, "action": "save", "addr": "bad addr!"})
+check("tunnel addr invalid rejected", r.status_code == 400, r.text[:120])
+r = c.post("/api/tunnel", json={"server_id": sid, "action": "frobnicate"})
+check("tunnel unknown action rejected", r.status_code == 400, r.text[:120])
+r = c.post("/api/tunnel", json={"server_id": sid, "action": "save", "addr": ""})
+check("tunnel addr cleared", r.status_code == 200 and r.json().get("addr") == "", r.text[:120])
 (pd := sd / "world" / "playerdata").mkdir(parents=True, exist_ok=True)
 puuid = "54aaa8c9-aa2e-4d12-be3e-6f7691913855"
 _nf = nbtlib.File(Compound({"Health": Int(20)}), gzipped=True)
