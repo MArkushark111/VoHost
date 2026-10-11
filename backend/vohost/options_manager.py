@@ -1,4 +1,5 @@
 """server.properties + MOTD/icon/options with toggle support. Multi-server aware via sdir param."""
+import re
 from pathlib import Path
 from .config import SERVER_DIR
 
@@ -56,6 +57,11 @@ def read_props(sdir=None) -> dict:
 
 def write_props(patch: dict, sdir=None):
     base = _dir(sdir)
+    patch = dict(patch)
+    # Dashboard accepts & codes in the MOTD; the server only understands section
+    # signs, so convert &<code> -> <section><code> when it reaches server.properties.
+    if "motd" in patch:
+        patch["motd"] = re.sub(r"&([0-9a-fklmnorKLMNOR])", "\u00A7\\1", str(patch["motd"]))
     cur = read_props(sdir)
     cur.update({k: str(v) for k, v in patch.items() if not k.startswith("_")})
     lines = ["# VoHost server.properties (managed)"]

@@ -81,12 +81,16 @@ r = c.post("/api/players/item/clear", json={"uuid": "nobody-0000-0000-0000-00000
 check("item clear missing player 404", r.status_code == 404, r.text)
 r = c.put("/api/options", json={"server_id": sid, "props": {"keepInventory": "true", "enable-command-block": "true"}})
 check("keepInventory toggle saved", r.status_code == 200, r.text)
+r = c.put("/api/options", json={"server_id": sid, "props": {"motd": "&lSmall &c&kAAAA"}})
+check("motd save with & codes", r.status_code == 200, r.text)
 
 # 4d. usernames resolve via usercache.json even with no bukkit NBT tag (vanilla/Fabric)
 from vohost.servers import server_dir as _sdir
 import nbtlib
 from nbtlib.tag import Compound, List, Int, String, Byte
 sd = _sdir(sid)
+_motd_txt = (sd / "server.properties").read_text()
+check("motd &->section conversion stored", "\u00a7lSmall \u00a7c\u00a7kAAAA" in _motd_txt and "&lSmall" not in _motd_txt, _motd_txt[:200])
 (pd := sd / "world" / "playerdata").mkdir(parents=True, exist_ok=True)
 puuid = "54aaa8c9-aa2e-4d12-be3e-6f7691913855"
 _nf = nbtlib.File(Compound({"Health": Int(20)}), gzipped=True)
