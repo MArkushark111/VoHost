@@ -1,5 +1,6 @@
 :root{--bg:#151619;--panel:#1e2024;--line:#303338;--txt:#e8e9eb;--mut:#989ba1;--acc:#8a8f97;--red:#d9545a;--ok:#4db96f}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;display:flex;min-height:100vh}
+.mc-obf{letter-spacing:1px}
 aside{width:250px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
 .brand{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
 .brand b{font-size:20px}.brand small{color:var(--mut);display:block;font-size:12px}

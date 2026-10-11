@@ -187,6 +187,14 @@ r = c.get("/"); check("index page", r.status_code == 200 and "VoHost" in r.text,
 r = c.get("/assets/app.js"); check("assets js", r.status_code == 200, r.text[:60])
 r = c.get("/assets/style.css"); check("assets css", r.status_code == 200, r.text[:40])
 
+# 4g. Minecraft legacy formatting (&c &l &k ...) wired into name/MOTD renders
+_js = A.FRONT.joinpath("app.js").read_text() if A.FRONT.joinpath("app.js").exists() else ""
+check("mcFmt helper + obf slot present", "function mcFmt(" in _js and "mc-obf" in _js and "data-t=" in _js, "")
+check("server name/MOTD rendered via mcFmt",
+      "mcFmt(CURSRV.name" in _js and "mcFmt((s.props" in _js and "mcFmt(s.name)" in _js, "")
+check("public page formats name/motd", "function fmt(" in A.PUBLIC_HTML and "mc-obf" in A.PUBLIC_HTML
+      and A.PUBLIC_HTML.count("innerHTML=fmt(") >= 2, "")
+
 # 5. unauth guards
 c2 = TestClient(A.app)
 r = c2.get("/api/servers"); check("unauth 401", r.status_code == 401, r.text)

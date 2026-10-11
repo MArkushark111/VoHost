@@ -25,6 +25,46 @@ function ansi(s) {
 }
 const ok = r => r && r.ok !== false;
 
+// ---------- Minecraft legacy formatting (&c &6 &l &k ...) ----------
+const MC_COL = { 0: "#000000", 1: "#0000AA", 2: "#00AA00", 3: "#00AAAA", 4: "#AA0000", 5: "#AA00AA", 6: "#FFAA00", 7: "#AAAAAA", 8: "#555555", 9: "#5555FF", a: "#55FF55", b: "#55FFFF", c: "#FF5555", d: "#FF55FF", e: "#FFFF55", f: "#FFFFFF" };
+const _MC_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$!?";
+function _mcRnd(t) { let o = ""; for (let i = 0; i < t.length; i++) o += t[i] === " " ? " " : _MC_CHARS[Math.floor(Math.random() * _MC_CHARS.length)]; return o; }
+setInterval(() => { document.querySelectorAll(".mc-obf").forEach(el => { const t = el.getAttribute("data-t") || ""; el.textContent = _mcRnd(t); }); }, 80);
+function mcFmt(str) {
+  if (!str) return "";
+  const s = String(str);
+  const runs = [];
+  let txt = "", st = { c: "", b: false, i: false, u: false, s: false, k: false };
+  const push = () => { if (txt) { runs.push({ t: txt, st: Object.assign({}, st) }); txt = ""; } };
+  const reset = () => ({ c: "", b: false, i: false, u: false, s: false, k: false });
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "&" || ch === "\u00A7") {
+      const cd = (s[i + 1] || "").toLowerCase();
+      if (/^[0-9a-f]$/.test(cd)) { push(); st = reset(); st.c = MC_COL[cd]; i++; continue; }
+      if (cd === "k") { push(); st.k = true; i++; continue; }
+      if (cd === "l") { push(); st.b = true; i++; continue; }
+      if (cd === "m") { push(); st.s = true; i++; continue; }
+      if (cd === "n") { push(); st.u = true; i++; continue; }
+      if (cd === "o") { push(); st.i = true; i++; continue; }
+      if (cd === "r") { push(); st = reset(); i++; continue; }
+    }
+    txt += ch;
+  }
+  push();
+  return runs.map(r => {
+    const css = [];
+    if (r.st.c) css.push("color:" + r.st.c);
+    if (r.st.b) css.push("font-weight:700");
+    if (r.st.i) css.push("font-style:italic");
+    const dec = []; if (r.st.u) dec.push("underline"); if (r.st.s) dec.push("line-through");
+    if (dec.length) css.push("text-decoration:" + dec.join(" "));
+    const style = css.length ? ` style="${css.join(";")}"` : "";
+    if (r.st.k) return `<span class="mc-obf"${style} data-t="${esc(r.t)}">${_mcRnd(r.t)}</span>`;
+    return `<span class="mc"${style}>${esc(r.t)}</span>`;
+  }).join("");
+}
+
 // ---------- custom UI dialogs (no browser alert/confirm/prompt) ----------
 function toast(msg, type) {
   let box = document.getElementById("toasts");
@@ -126,13 +166,13 @@ async function loadServers() {
     const arr = j.servers || [];
     $("#srvCount").textContent = arr.length ? arr.length + " server(s) - click Manage to open" : "No servers yet. Add one below.";
     $("#srvList").innerHTML = arr.map(s =>
-      `<div class="mod"><div><b>${esc(s.name)}</b> <span class="mut">${esc(s.id)} - port ${s.port} - ${s.network_mode.toUpperCase()} - ${s.online ? "ONLINE" : "offline"}</span><br>` +
+      `<div class="mod"><div><b>${mcFmt(s.name)}</b> <span class="mut">${esc(s.id)} - port ${s.port} - ${s.network_mode.toUpperCase()} - ${s.online ? "ONLINE" : "offline"}</span><br>` +
       `<button class="act" onclick="openSrv('${esc(s.id)}')">Manage</button> ` +
       `<button class="act danger" onclick="delSrv('${esc(s.id)}')">Delete</button></div></div>`).join("");
     if (!SID && arr.length) { SID = arr[0].id; localStorage.setItem("vohost_sid", SID); }
     if (SID) {
       CURSRV = arr.find(x => x.id === SID) || null;
-      $("#srvName").textContent = CURSRV ? CURSRV.name : "VoHost";
+      $("#srvName").innerHTML = CURSRV ? mcFmt(CURSRV.name || "") : "VoHost";
       $("#srvId").textContent = CURSRV ? CURSRV.id : "select";
       setLoaderUI();
     }
@@ -173,7 +213,7 @@ async function loadStatus() {
     $("#mOn").textContent = s.online ? "ONLINE" : "OFFLINE"; $("#mTps").textContent = s.tps;
     $("#mMc").textContent = (s.mc_rss_mb ?? "-") + " MB"; $("#mDisk").textContent = (s.disk_pct ?? "-") + " %";
     $("#mNet").textContent = (s.network_mode || "?").toUpperCase(); $("#mPort").textContent = (s.server || {}).port || "?";
-    $("#motdCur").textContent = (s.props || {}).motd || "";
+    $("#motdCur").innerHTML = mcFmt((s.props || {}).motd || "");
     const soft = s.software || {};
     $("#mSoft").textContent = (soft.loader || "vanilla") + " " + (soft.mc_version || "");
     $("#netSel").value = s.network_mode || "wan";
