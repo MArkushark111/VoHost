@@ -1,10 +1,15 @@
 """Boot the real app against a temp VOHOST_BASE and exercise every endpoint the UI calls, no MC required."""
 import os, tempfile, json, sys
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
 tmp = tempfile.mkdtemp(prefix="vh-test-")
 os.environ["VOHOST_BASE"] = tmp
 from fastapi.testclient import TestClient
 import app as A
+
+# point OS-level side effects at temp (create-server hook may apply flood rules)
+from vohost import ddos as _DP0
+_DP0.SYSCTL_FILE = Path(tempfile.mkdtemp(prefix="vh-ddos-")) / "99-vohost-ddos.conf"
 
 errors = []
 def check(label, ok, extra=""):
@@ -268,6 +273,46 @@ check("public page formats name/motd", "function fmt(" in A.PUBLIC_HTML and "mc-
 # 5. unauth guards
 c2 = TestClient(A.app)
 r = c2.get("/api/servers"); check("unauth 401", r.status_code == 401, r.text)
+
+# 6. DDoS/flood protection: rules, API, login brute-force guard
+rules = _DP0.build_rules([25565, "abc", 25565])
+flat = [" ".join(r) for r in rules]
+check("ddos rules pure", len(rules) == 2 and any("--connlimit-above 8" in f for f in flat)
+      and any("--hashlimit-above 30/min" in f for f in flat)
+      and all("--dport 25565" in f for f in flat)
+      and any("-j RETURN" in f or "-j DROP" in f for f in flat)
+      and not any("-j ACCEPT" in f for f in flat), json.dumps(rules)[:200])
+_seen_cmds = []
+_orig_run = _DP0._run
+def _fake_run(cmd, timeout=60):
+    _seen_cmds.append(cmd)
+    if cmd[:2] == ["ufw", "status"]:
+        return 0, "22/tcp LIMIT Anywhere"
+    return 0, "ok"
+_DP0._run = _fake_run
+res = _DP0.apply([25565])
+check("ddos apply faked", res.get("ok") is True and _DP0.SYSCTL_FILE.exists()
+      and "syncookies" in _DP0.SYSCTL_FILE.read_text()
+      and any(c[:3] == ["iptables", "-N", _DP0.CHAIN] for c in _seen_cmds)
+      and sum(1 for c in _seen_cmds if c[:2] == ["iptables", "-A"]) == 2, json.dumps(res)[:200])
+st = _DP0.status()
+check("ddos status faked", st.get("sysctl") is True and st.get("chain") is True and st.get("ufw_ssh") is True, json.dumps(st))
+r = c.put("/api/security", json={"enabled": True})
+check("security enable", r.status_code == 200 and r.json().get("enabled") is True, r.text[:200])
+r = c.get("/api/security")
+check("security read", r.status_code == 200 and r.json().get("enabled") is True and "sysctl" in r.json(), r.text[:200])
+r = c.put("/api/security", json={"enabled": False})
+check("security disable", r.status_code == 200 and r.json().get("enabled") is False
+      and not _DP0.SYSCTL_FILE.exists(), r.text[:200])
+_DP0._run = _orig_run
+
+# 7. login brute-force guard: hammer bad passwords -> 429, normal traffic unaffected
+codes = []
+for _ in range(12):
+    rr = c.post("/api/login", json={"username": "admin", "password": "wrong-spam"})
+    codes.append(rr.status_code)
+check("login spam locked out", codes[-1] == 429 and 401 in codes, json.dumps(codes))
+r = c.get("/api/servers"); check("guard spares normal endpoints", r.status_code == 200, r.text[:80])
 
 print()
 print("ERRORS:", len(errors))

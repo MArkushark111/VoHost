@@ -16,6 +16,7 @@ from vohost import options_manager as OM
 from vohost import nbt_players as NP
 from vohost import backups_sched as BK
 from vohost import duckdns as DD
+from vohost import ddos as DP
 from vohost import servers as SV
 from vohost.auth import ensure_admin, upsert_user, list_users, verify, make_token
 
@@ -320,6 +321,11 @@ def srv_create(req: Request, body: dict):
                          body.get("network_mode", "wan"),
                          body.get("port"), body.get("memory_max", "4G"),
                          body.get("loader", "vanilla"), body.get("mc_version", "latest"))
+    try:
+        if load_config().get("ddos_protect"):
+            DP.apply([x.get("port") for x in SV.list_servers()])
+    except Exception:
+        pass
     return {"ok": True, "server": s,
             "note": f"{s['name']} on port {s['port']} ({s['network_mode'].upper()} — {'public, forward port on router' if s['network_mode']=='wan' else 'LAN only, UFW restricted to 192.168/10/172.16'})"}
 
@@ -1112,6 +1118,29 @@ def dd_put(req: Request, body: dict):
     return {"ok": True, "domain": domain, "hostname": DD.fqdn(domain) if domain else "",
             "token_set": bool(load_config().get("duckdns_token", "")), "sync": sync}
 
+# ---------- DDoS/flood protection (machine-level; see vohost/ddos.py for limits) ----------
+@app.get("/api/security")
+def sec_get(req: Request):
+    need(req, "viewer")
+    return {"enabled": bool(load_config().get("ddos_protect", False)), **DP.status()}
+
+@app.put("/api/security")
+def sec_put(req: Request, body: dict):
+    need(req, "admin")
+    on = bool((body or {}).get("enabled", False))
+    cfg = load_config()
+    cfg["ddos_protect"] = on
+    save_config(cfg)
+    if on:
+        try:
+            ports = [x.get("port") for x in SV.list_servers()]
+        except Exception:
+            ports = []
+        res = DP.apply(ports)
+    else:
+        res = DP.remove()
+    return {"ok": True, "enabled": on, **DP.status(), "log": res.get("log", [])}
+
 # ---------- backups / misc ----------
 @app.get("/api/backups")
 def bk_list(req: Request, server_id: str = ""):
@@ -1300,6 +1329,44 @@ async def no_cache_assets(request, call_next):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return response
 
+# ---------- login brute-force guard (per-IP, in-memory) ----------
+_LOGIN_HITS: dict = {}
+LG_HIT_WINDOW = 60      # >=30 login/setup attempts in 60s -> 429
+LG_HIT_MAX = 30
+LG_FAIL_WINDOW = 300    # >=8 failed logins in 5 min -> lock IP 5 min
+LG_FAIL_MAX = 8
+LG_LOCK_SECS = 300
+
+@app.middleware("http")
+async def login_guard(request, call_next):
+    if not (request.method == "POST" and request.url.path in ("/api/login", "/api/setup")):
+        return await call_next(request)
+    ip = request.client.host if request.client else "?"
+    now = time.time()
+    e = _LOGIN_HITS.get(ip) or {"hit": [], "fail": [], "locked": 0.0}
+    e["hit"] = [t for t in e["hit"] if now - t < LG_HIT_WINDOW]
+    e["fail"] = [t for t in e["fail"] if now - t < LG_FAIL_WINDOW]
+    if e["locked"] > now:
+        return JSONResponse({"detail": "too many attempts, try again later"},
+                            status_code=429, headers={"Retry-After": str(int(e["locked"] - now))})
+    if len(e["hit"]) >= LG_HIT_MAX:
+        e["locked"] = now + 60
+        _LOGIN_HITS[ip] = e
+        return JSONResponse({"detail": "too many attempts, try again later"},
+                            status_code=429, headers={"Retry-After": "60"})
+    resp = await call_next(request)
+    e["hit"].append(now)
+    if resp.status_code in (401, 403):
+        e["fail"].append(now)
+        if len(e["fail"]) >= LG_FAIL_MAX:
+            e["locked"] = now + LG_LOCK_SECS
+    _LOGIN_HITS[ip] = e
+    # prune idle entries so the table stays tiny
+    for k in [k for k, v in _LOGIN_HITS.items()
+              if k != ip and not v["hit"] and not v["fail"] and v["locked"] <= now]:
+        _LOGIN_HITS.pop(k, None)
+    return resp
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     idx = FRONT / "index.html"
@@ -1353,3 +1420,18 @@ try:
     print("[VoHost] duckdns sync running")
 except Exception as e:
     print(f"[VoHost] duckdns sync failed to start: {e}")
+
+# re-apply flood rules at boot (iptables does not survive reboot)
+def _ddos_boot():
+    try:
+        if load_config().get("ddos_protect"):
+            ports = [x.get("port") for x in SV.list_servers()]
+            DP.apply(ports)
+            print("[VoHost] ddos rules re-applied")
+    except Exception as e:
+        print(f"[VoHost] ddos re-apply skipped: {e}")
+
+try:
+    threading.Thread(target=_ddos_boot, daemon=True).start()
+except Exception as e:
+    print(f"[VoHost] ddos boot hook failed: {e}")

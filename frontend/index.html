@@ -41,6 +41,12 @@
     <div class="row"><button class="act ok" id="ddSave">Save + update now</button><span class="mut" id="ddStatus">-</span></div>
     <p class="mut" style="margin:6px 0 0">Get a free token at duckdns.org (log in, copy the token). The first update registers the name if nobody took it. Players then join with <b id="ddAddr">-</b> - the panel re-points it at your IP automatically.</p>
   </div>
+  <div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px">
+    <h3 style="margin:0 0 8px">DDoS / flood protection</h3>
+    <div class="row"><span class="mut" id="secStatus">-</span></div>
+    <div class="row"><button class="act ok" id="secOn">Enable</button><button class="act danger" id="secOff">Disable</button></div>
+    <p class="mut" style="margin:6px 0 0">Blunts floods on this machine: SYN defenses, max 8 connections and ~30 new connections/min per IP on game ports, SSH rate limit, panel login brute-force lockout. Honest limit: a big volumetric attack still fills your home connection - this stops script-kiddie floods, not botnets.</p>
+  </div>
   <canvas id="graph" width="900" height="120" style="width:100%;background:#0d0e10;border-radius:8px"></canvas>
   <div>
     <button class="act ok" data-a="start">Start</button>

@@ -116,7 +116,7 @@ function show(tab) {
   document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
   document.querySelectorAll("main section").forEach(sec => sec.classList.toggle("hide", sec.dataset.s !== tab));
   ({
-    servers: loadServers, server: () => { loadStatus(); loadDD(); }, options: loadOpts, console: nop,
+    servers: loadServers, server: () => { loadStatus(); loadDD(); loadSec(); }, options: loadOpts, console: nop,
     log: () => scheduleLog(true), players: loadPlayers, software: loadSw, mods: () => refreshInstBadges(), plugins: () => refreshInstBadges(), files: () => loadFiles(cur), worlds: loadWorlds,
     backups: loadBk, access: loadUsers
   }[tab] || nop)();
@@ -294,6 +294,19 @@ if (_ddSave) _ddSave.onclick = async () => {
     loadDD(); loadStatus();
   } catch (e) { toast(e.message, "error"); }
 };
+
+// ---------- DDoS / flood protection ----------
+async function loadSec() {
+  if (!$("#secStatus")) return;
+  try {
+    const j = await api("/api/security");
+    const parts = ["SYN defenses", "connection limits", "SSH limit", "login guard"].filter((_, i) => [j.sysctl, j.chain, j.ufw_ssh, j.login_guard][i]);
+    $("#secStatus").textContent = (j.enabled ? "ENABLED" : "disabled") + (j.enabled ? " - active: " + (parts.join(", ") || "applying...") : "");
+  } catch (e) { $("#secStatus").textContent = e.message; }
+}
+const _secOn = $("#secOn"), _secOff = $("#secOff");
+if (_secOn) _secOn.onclick = async () => { try { await api("/api/security", { method: "PUT", body: JSON.stringify({ enabled: true }) }); toast("Flood protection enabled.", "ok"); } catch (e) { toast(e.message, "error"); } loadSec(); };
+if (_secOff) _secOff.onclick = async () => { try { await api("/api/security", { method: "PUT", body: JSON.stringify({ enabled: false }) }); toast("Flood protection disabled.", "ok"); } catch (e) { toast(e.message, "error"); } loadSec(); };
 setInterval(() => { if (!document.querySelector("[data-s='server']").classList.contains("hide")) loadStatus(); }, 4000);
 
 // ---------- console / log ----------
