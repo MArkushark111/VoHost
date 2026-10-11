@@ -116,7 +116,7 @@ function show(tab) {
   document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("on", b.dataset.t === tab));
   document.querySelectorAll("main section").forEach(sec => sec.classList.toggle("hide", sec.dataset.s !== tab));
   ({
-    servers: loadServers, server: loadStatus, options: loadOpts, console: nop,
+    servers: loadServers, server: () => { loadStatus(); loadDD(); }, options: loadOpts, console: nop,
     log: () => scheduleLog(true), players: loadPlayers, software: loadSw, mods: () => refreshInstBadges(), plugins: () => refreshInstBadges(), files: () => loadFiles(cur), worlds: loadWorlds,
     backups: loadBk, access: loadUsers
   }[tab] || nop)();
@@ -228,8 +228,10 @@ async function loadStatus() {
     $("#mLan").textContent = ip.lan || "-";
     $("#mWan").textContent = ip.wan || "fetching...";
     const mport = (s.props && s.props["server-port"]) || ((s.server || {}).port) || "25565";
+    const host = s.hostname || "";
     let conn = "";
     if (s.network_mode === "lan") conn = ip.lan ? ip.lan + ":" + mport : "fetching...";
+    else if (host) conn = host + ":" + mport;
     else conn = ip.wan && ip.wan !== "-" ? ip.wan + ":" + mport : "fetching WAN...";
     $("#mConn").textContent = conn;
     if (CURSRV && (!CURSRV.loader) && soft.loader) { CURSRV.loader = soft.loader; setLoaderUI(); }
@@ -267,6 +269,31 @@ document.querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
 });
 $("#btnEula").onclick = async () => { try { await api("/api/eula", { method: "POST", body: JSON.stringify({ accept: true }) }); toast("EULA accepted.", "ok"); } catch (e) { toast(e.message, "error"); } };
 $("#netGo").onclick = async () => { await api("/api/servers/" + SID, { method: "PUT", body: JSON.stringify({ network_mode: $("#netSel").value }) }); loadStatus(); };
+
+// ---------- subdomain (DuckDNS) ----------
+async function loadDD() {
+  if (!SID || !$("#ddDomain")) return;
+  try {
+    const j = await api("/api/subdomain");
+    $("#ddDomain").value = j.domain || "";
+    $("#ddToken").placeholder = j.token_set ? "token saved (paste a new one to replace)" : "paste token from duckdns.org";
+    const l = j.last || {};
+    $("#ddStatus").textContent = l.ts ? ((l.ok ? "OK: " : "FAIL: ") + (l.message || "") + " - " + new Date(l.ts * 1000).toLocaleString()) : "not synced yet";
+    $("#ddAddr").textContent = j.hostname ? (j.hostname + ":" + (j.port || "25565")) : "-";
+  } catch (e) { $("#ddStatus").textContent = e.message; }
+}
+const _ddSave = $("#ddSave");
+if (_ddSave) _ddSave.onclick = async () => {
+  try {
+    const body = { domain: $("#ddDomain").value, server_id: SID };
+    if ($("#ddToken").value) body.token = $("#ddToken").value;
+    const r = await api("/api/subdomain", { method: "PUT", body: JSON.stringify(body) });
+    $("#ddToken").value = "";
+    const sy = r.sync || {};
+    toast(sy.ok ? ("Subdomain live: " + (sy.message || "")) : ("Saved. Sync: " + (sy.message || "failed")), sy.ok ? "ok" : "error");
+    loadDD(); loadStatus();
+  } catch (e) { toast(e.message, "error"); }
+};
 setInterval(() => { if (!document.querySelector("[data-s='server']").classList.contains("hide")) loadStatus(); }, 4000);
 
 // ---------- console / log ----------

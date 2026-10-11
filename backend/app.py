@@ -15,6 +15,7 @@ from vohost import server_manager as SM
 from vohost import options_manager as OM
 from vohost import nbt_players as NP
 from vohost import backups_sched as BK
+from vohost import duckdns as DD
 from vohost import servers as SV
 from vohost.auth import ensure_admin, upsert_user, list_users, verify, make_token
 
@@ -350,6 +351,7 @@ def status(req: Request, server_id: str = ""):
             pass
     return {**m, "props": {k: props.get(k) for k in ("motd", "max-players", "server-port")},
             "software": soft, "server": srv, "network_mode": props.get("_network_mode", (srv or {}).get("network_mode", "wan")),
+            "hostname": DD.fqdn((srv or {}).get("duckdns_domain", "")) if DD.normalize_domain((srv or {}).get("duckdns_domain", "")) else "",
             "ip": {"lan": lan_ip(), "wan": wan_ip()}}
 
 @app.post("/api/server/{act}")
@@ -1076,6 +1078,40 @@ def opts_put(req: Request, body: dict):
         pass  # per-server rcon password lives in server.properties; server_manager reads it live
     return {"ok": True, "note": "saved live — restart server to apply server.properties" + cracked_note}
 
+# ---------- DuckDNS subdomain (no login page use; token never leaves the server) ----------
+@app.get("/api/subdomain")
+def dd_get(req: Request, server_id: str = ""):
+    need(req, "viewer")
+    srv, _ = resolve(req, server_id)
+    sid = srv["id"] if srv else ""
+    domain = DD.normalize_domain((srv or {}).get("duckdns_domain", ""))
+    port = (srv or {}).get("port", 25565)
+    return {"domain": domain, "hostname": DD.fqdn(domain) if domain else "",
+            "port": port, "token_set": bool(load_config().get("duckdns_token", "")),
+            "wan": wan_ip(), "resolved": DD.resolve(domain) if domain else "",
+            "last": DD.last_status(sid)}
+
+@app.put("/api/subdomain")
+def dd_put(req: Request, body: dict):
+    need(req, "admin")
+    srv, _ = resolve(req, body.get("server_id", ""))
+    if not srv:
+        raise HTTPException(404, "no server")
+    if "token" in body and str(body.get("token") or "").strip():
+        cfg = load_config()
+        cfg["duckdns_token"] = str(body["token"]).strip()
+        save_config(cfg)
+    if "domain" in body:
+        raw = str(body.get("domain") or "").strip()
+        if raw and not DD.normalize_domain(raw):
+            raise HTTPException(400, "subdomain must be a-z, 0-9, dash (e.g. vosmp)")
+        SV.update_server(srv["id"], {"duckdns_domain": DD.normalize_domain(raw)})
+        srv = SV.get_server(srv["id"])
+    domain = DD.normalize_domain(srv.get("duckdns_domain", ""))
+    sync = DD.sync_server(srv, wan_ip(), load_config().get("duckdns_token", ""), force=True) if domain else {"ok": False, "skipped": True, "message": "subdomain cleared"}
+    return {"ok": True, "domain": domain, "hostname": DD.fqdn(domain) if domain else "",
+            "token_set": bool(load_config().get("duckdns_token", "")), "sync": sync}
+
 # ---------- backups / misc ----------
 @app.get("/api/backups")
 def bk_list(req: Request, server_id: str = ""):
@@ -1174,6 +1210,7 @@ def public_api(sid: str):
     out = {"name": s.get("name"), "id": sid, "online": online,
            "motd": OM.read_props(sdir).get("motd", ""),
            "port": s.get("port", 25565), "network_mode": s.get("network_mode", "wan"),
+           "hostname": DD.fqdn(s.get("duckdns_domain", "")) if DD.normalize_domain(s.get("duckdns_domain", "")) else "",
            "ip": {"lan": lan_ip(), "wan": wan_ip()}, "ts": time.time()}
     if online:
         r = SM.send_command("list", server=s)
@@ -1229,7 +1266,7 @@ document.getElementById('name').innerHTML=fmt(j.name)||'?';
 const pill=document.getElementById('pill');pill.textContent=j.online?'ONLINE':'OFFLINE';pill.className='pill '+(j.online?'up':'down');
 document.getElementById('sub').textContent=j.online?('running, '+j.network_mode+' mode'):'server is stopped';
 document.getElementById('motd').innerHTML=fmt(j.motd)||'';
-const ip=j.network_mode==='lan'?j.ip.lan:j.ip.wan;document.getElementById('addr').textContent=(ip||'-')+':'+j.port;
+const ip=j.network_mode==='lan'?j.ip.lan:j.ip.wan;const host=(j.network_mode!=='lan'&&j.hostname)?j.hostname:ip;document.getElementById('addr').textContent=(host||'-')+':'+j.port;
 const p=j.players||{};document.getElementById('pc').textContent=(p.count!==undefined)?(p.count+' / '+p.max):'-';
 document.getElementById('tps').textContent=(j.tps!==undefined&&j.tps!==-1)?j.tps:'-';
 document.getElementById('foot').textContent='VoHost status page - updated '+new Date(j.ts*1000).toLocaleTimeString();
@@ -1309,3 +1346,10 @@ try:
     print("[VoHost] backup scheduler running")
 except Exception as e:
     print(f"[VoHost] backup scheduler failed to start: {e}")
+
+# background DuckDNS sync: keep <name>.duckdns.org on the current WAN IP
+try:
+    threading.Thread(target=lambda: DD.start_loop(wan_ip, lambda: load_config().get("duckdns_token", "")), daemon=True).start()
+    print("[VoHost] duckdns sync running")
+except Exception as e:
+    print(f"[VoHost] duckdns sync failed to start: {e}")

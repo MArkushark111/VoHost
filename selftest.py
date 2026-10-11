@@ -115,6 +115,42 @@ check("server start seed keeps cracked mode",
 r = c.put("/api/options", json={"server_id": sid, "props": {"online-mode": "true", "enforce-secure-profile": "true"}})
 check("premium-only restore ok", r.status_code == 200
       and "online-mode=true" in (sd / "server.properties").read_text(), r.text[:200])
+
+# 4d3. DuckDNS subdomain: normalize/update paths + API round-trip (no live token needed)
+from vohost import duckdns as _DD
+check("duckdns normalize", _DD.normalize_domain(" VoSMP.duckdns.org ") == "vosmp"
+      and _DD.normalize_domain("bad name!") == "" and _DD.fqdn("vosmp") == "vosmp.duckdns.org", "")
+_seen = {}
+def _fake_ok(u):
+    _seen["url"] = u
+    return "OK\n1.2.3.4"
+def _boom(u):
+    raise RuntimeError("down")
+ok, _m = _DD.update("vosmp", "tok", "1.2.3.4", http_get=_fake_ok)
+check("duckdns update OK path", ok is True and "domains=vosmp" in _seen.get("url", "")
+      and "token=tok" in _seen["url"] and "ip=1.2.3.4" in _seen["url"], _seen.get("url", ""))
+ok, _m = _DD.update("vosmp", "tok", "1.2.3.4", http_get=lambda u: "KO")
+check("duckdns update KO path", ok is False, "")
+ok, _m = _DD.update("vosmp", "tok", "1.2.3.4", http_get=_boom)
+check("duckdns update exception path", ok is False, "")
+check("duckdns resolve invalid", _DD.resolve("bad name!") == "", "")
+r = c.put("/api/subdomain", json={"server_id": sid, "domain": " TestSub123 ", "token": "tok-bogus"})
+j = r.json() if r.status_code == 200 else {}
+check("subdomain save normalizes", r.status_code == 200 and j.get("domain") == "testsub123"
+      and j.get("hostname") == "testsub123.duckdns.org" and j.get("token_set") is True
+      and isinstance(j.get("sync"), dict) and j["sync"].get("ok") is False, r.text[:250])
+r = c.get("/api/subdomain?server_id=" + sid)
+j = r.json() if r.status_code == 200 else {}
+check("subdomain read (no token leak)", r.status_code == 200 and j.get("domain") == "testsub123"
+      and j.get("token_set") is True and "tok-bogus" not in r.text, r.text[:200])
+r = c.get("/api/status?server_id=" + sid)
+check("status carries hostname", r.status_code == 200 and r.json().get("hostname") == "testsub123.duckdns.org", r.text[:150])
+r = c.get("/api/public/" + sid)
+check("public api carries hostname", r.status_code == 200 and r.json().get("hostname") == "testsub123.duckdns.org", r.text[:150])
+r = c.put("/api/subdomain", json={"server_id": sid, "domain": "bad name!"})
+check("subdomain invalid rejected", r.status_code == 400, r.text[:120])
+r = c.put("/api/subdomain", json={"server_id": sid, "domain": ""})
+check("subdomain cleared", r.status_code == 200 and r.json().get("domain") == "" and r.json().get("hostname") == "", r.text[:150])
 (pd := sd / "world" / "playerdata").mkdir(parents=True, exist_ok=True)
 puuid = "54aaa8c9-aa2e-4d12-be3e-6f7691913855"
 _nf = nbtlib.File(Compound({"Health": Int(20)}), gzipped=True)
