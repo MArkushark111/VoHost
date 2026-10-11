@@ -188,6 +188,8 @@ check("wipe kept server.properties+eula", (sd / "server.properties").exists() an
       "config files missing")
 
 r = c.get("/"); check("index page", r.status_code == 200 and "VoHost" in r.text, r.text[:100])
+check("index cache-busts assets", "/assets/style.css?v=" in r.text and "/assets/app.js?v=" in r.text, r.text[:200])
+r = c.get("/assets/style.css?v=123"); check("assets with query still served", r.status_code == 200, str(r.status_code))
 r = c.get("/assets/app.js"); check("assets js", r.status_code == 200, r.text[:60])
 r = c.get("/assets/style.css"); check("assets css", r.status_code == 200, r.text[:40])
 check("assets served no-cache", "no-cache" in c.get("/assets/style.css").headers.get("cache-control", "").lower(),

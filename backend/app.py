@@ -1254,7 +1254,15 @@ async def no_cache_assets(request, call_next):
 def index():
     idx = FRONT / "index.html"
     if idx.exists():
-        return HTMLResponse(idx.read_bytes().decode("utf-8", "replace"))
+        html = idx.read_bytes().decode("utf-8", "replace")
+        # cache-bust: file mtime in the URL so browsers fetch fresh CSS/JS after every deploy
+        for asset in ("style.css", "app.js"):
+            try:
+                v = str(int((FRONT / asset).stat().st_mtime))
+            except Exception:
+                v = "0"
+            html = html.replace(f"/assets/{asset}", f"/assets/{asset}?v={v}")
+        return HTMLResponse(html)
     return "<h1>VoHost</h1><p>frontend/ missing</p>"
 
 def ensure_admin_at_boot():
