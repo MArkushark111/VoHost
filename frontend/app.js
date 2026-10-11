@@ -702,13 +702,13 @@ async function loadFiles(p) {
     const items = j.items || [];
     if (!items.length) { $("#fTable").innerHTML = "<tr><td class='mut'>empty folder</td></tr>"; return; }
     $("#fTable").innerHTML = items.map(i => i.dir
-      ? `<tr><td><a href="#" onclick="openFolder('${esc(i.name)}');return false">${esc(i.name)}/</a></td><td>-</td><td><button class="act" onclick="openFolder('${esc(i.name)}')">Open</button></td></tr>`
+      ? `<tr><td><a href="#" onclick="openFolder('${esc(i.name)}');return false">${esc(i.name)}/</a></td><td>-</td><td><button class="act" onclick="openFolder('${esc(i.name)}')">Open</button> <button class="act danger" onclick="delP('${esc(i.name)}',1)">Delete</button></td></tr>`
       : `<tr><td>${esc(i.name)}</td><td>${(i.size / 1024).toFixed(1)} KB</td><td>${canEdit(i) ? `<button class="act" onclick="editFile('${esc(i.name)}')">Edit</button> ` : ""}<button class="act" onclick="dlFile('${esc(i.name)}')">Download</button> <button class="act danger" onclick="delP('${esc(i.name)}')">Delete</button></td></tr>`).join("");
   } catch (e) { $("#fTable").innerHTML = "<tr><td>" + esc(e.message) + "</td></tr>"; }
 }
 window.openFolder = n => loadFiles(cur ? cur + "/" + n : n);
 window.dlFile = async n => { window.open("/api/files?path=" + encodeURIComponent(cur ? cur + "/" + n : n) + "&" + qs(), "_blank"); };
-window.delP = async n => { if (!(await ask("Delete " + n + "?"))) return; await api("/api/files/delete", { method: "POST", body: JSON.stringify({ path: cur ? cur + "/" + n : n, server_id: SID }) }); loadFiles(cur); };
+window.delP = async (n, isDir) => { if (!(await ask(isDir ? "Delete folder " + n + " and EVERYTHING inside it?" : "Delete " + n + "?"))) return; await api("/api/files/delete", { method: "POST", body: JSON.stringify({ path: cur ? cur + "/" + n : n, server_id: SID }) }); loadFiles(cur); };
 const EDIT_EXT = /\.(txt|properties|json|yml|yaml|toml|cfg|conf|sh|xml|md|log|env|ini|list)$/i;
 function canEdit(i) { return !i.dir && EDIT_EXT.test(i.name) && i.size < 512 * 1024; }
 let editPath = "";
