@@ -168,6 +168,7 @@ async function loadServers() {
     $("#srvList").innerHTML = arr.map(s =>
       `<div class="mod"><div><b>${mcFmt(s.name)}</b> <span class="mut">${esc(s.id)} - port ${s.port} - ${s.network_mode.toUpperCase()} - ${s.online ? "ONLINE" : "offline"}</span><br>` +
       `<button class="act" onclick="openSrv('${esc(s.id)}')">Manage</button> ` +
+      `<button class="act" onclick="renameSrv('${esc(s.id)}','${esc(s.name)}')">Rename</button> ` +
       `<button class="act danger" onclick="delSrv('${esc(s.id)}')">Delete</button></div></div>`).join("");
     if (!SID && arr.length) { SID = arr[0].id; localStorage.setItem("vohost_sid", SID); }
     if (SID) {
@@ -180,6 +181,12 @@ async function loadServers() {
   } catch (e) { $("#srvList").textContent = e.message; }
 }
 window.openSrv = async id => { SID = id; localStorage.setItem("vohost_sid", SID); show("server"); connectWS(); loadStatus(); };
+window.renameSrv = async (id, cur) => {
+  const nv = await askText("Server name - supports & codes, e.g. &l&cVo&6SM&eP", cur);
+  if (nv == null || !nv.trim() || nv === cur) return;
+  await api("/api/servers/" + id, { method: "PUT", body: JSON.stringify({ name: nv.trim() }) });
+  toast("Server renamed.", "ok"); loadServers();
+};
 window.delSrv = async id => { if (!(await ask("Delete server " + id + "? (files are kept)"))) return; await api("/api/servers/" + id, { method: "DELETE" }); SID = ""; CURSRV = null; localStorage.removeItem("vohost_sid"); toast("Server deleted.", "ok"); loadServers(); };
 $("#nsGo").onclick = async () => {
   try {
