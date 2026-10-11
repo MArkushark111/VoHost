@@ -388,7 +388,7 @@ async function loadOpts() {
       f.innerHTML += `<div class="tgl"><span>${esc(k)}</span><input type="checkbox" data-k="${k}" style="width:auto" ${on ? "checked" : ""}></div>`;
     });
     const cracked = (o.props["online-mode"] || "true") === "false";
-    f.innerHTML += `<div class="tgl" style="border:1px solid var(--warn,#c9a227);border-radius:8px;padding:8px"><span><b>Cracked mode</b> (allow TLauncher / unofficial clients) <span class="mut">- sets online-mode=false + enforce-secure-profile=false so cracked and official (Minecraft) clients join the same server</span></span><input type="checkbox" data-k="cracked-mode" style="width:auto" ${cracked ? "checked" : ""}></div>`;
+    f.innerHTML += `<div class="tgl" style="border:1px solid var(--warn,#c9a227);border-radius:8px;padding:8px"><span><b>Cracked mode</b> (allow TLauncher / unofficial clients) <span class="mut">- sets online-mode=false + enforce-secure-profile=false so cracked and official (Minecraft) clients join the same server and play together. Note: everyone gets an offline identity (premium players start a fresh inventory), and anyone can join under any name - restart the server after saving.</span></span><input type="checkbox" data-k="cracked-mode" style="width:auto" ${cracked ? "checked" : ""}></div>`;
     f.innerHTML += `<label>Network (WAN public / LAN only)</label><select data-k="_network_mode"><option value="wan" ${o.network_mode === "wan" ? "selected" : ""}>WAN - public</option><option value="lan" ${o.network_mode === "lan" ? "selected" : ""}>LAN - home only</option></select>`;
     $("#optTz").value = o.timezone || "UTC"; $("#optEnv").value = o.env || "";
     window._iconB64 = "";

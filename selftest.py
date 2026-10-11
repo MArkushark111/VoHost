@@ -98,6 +98,23 @@ from nbtlib.tag import Compound, List, Int, String, Byte
 sd = _sdir(sid)
 _motd_txt = (sd / "server.properties").read_text()
 check("motd &->section conversion stored", "\u00a7lSmall \u00a7c\u00a7kAAAA" in _motd_txt and "&lSmall" not in _motd_txt, _motd_txt[:200])
+# 4d2. cracked mode: online-mode=false always implies enforce-secure-profile=false
+r = c.put("/api/options", json={"server_id": sid, "props": {"online-mode": "false"}})
+_pr = (sd / "server.properties").read_text()
+check("cracked guard forces secure-profile off",
+      r.status_code == 200 and "online-mode=false" in _pr and "enforce-secure-profile=false" in _pr
+      and "cracked clients" in r.json().get("note", ""), r.text[:200])
+r = c.put("/api/options", json={"server_id": sid, "props": {"online-mode": "false", "enforce-secure-profile": "false"}})
+check("full cracked save persists", r.status_code == 200
+      and "online-mode=false" in (sd / "server.properties").read_text()
+      and "enforce-secure-profile=false" in (sd / "server.properties").read_text(), r.text[:200])
+A.seed_start_rcon({"id": sid, "rcon_port": 25575}, sd)
+_pr2 = (sd / "server.properties").read_text()
+check("server start seed keeps cracked mode",
+      "online-mode=false" in _pr2 and "enforce-secure-profile=false" in _pr2, _pr2[:200])
+r = c.put("/api/options", json={"server_id": sid, "props": {"online-mode": "true", "enforce-secure-profile": "true"}})
+check("premium-only restore ok", r.status_code == 200
+      and "online-mode=true" in (sd / "server.properties").read_text(), r.text[:200])
 (pd := sd / "world" / "playerdata").mkdir(parents=True, exist_ok=True)
 puuid = "54aaa8c9-aa2e-4d12-be3e-6f7691913855"
 _nf = nbtlib.File(Compound({"Health": Int(20)}), gzipped=True)

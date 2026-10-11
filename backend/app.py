@@ -1027,6 +1027,19 @@ def opts_put(req: Request, body: dict):
     need(req, "moderator")
     srv, sdir = resolve(req, body.get("server_id", ""))
     props = body.get("props", {})
+    # cracked-mode invariant: with Mojang auth off, chat keys cannot exist for
+    # offline players, so an offline server must not enforce secure profiles —
+    # otherwise TLauncher/cracked clients are kicked on join (1.19+).
+    cracked_note = ""
+    try:
+        merged = OM.read_props(sdir)
+        merged.update({k: str(v) for k, v in props.items() if not str(k).startswith("_")})
+        if str(merged.get("online-mode", "true")).lower() == "false" \
+                and str(merged.get("enforce-secure-profile", "true")).lower() != "false":
+            props["enforce-secure-profile"] = "false"
+            cracked_note = " (enforce-secure-profile forced false: required for cracked clients)"
+    except Exception:
+        pass
     OM.write_props(props, sdir)
     if srv and "_network_mode" in props:
         SV.update_server(srv["id"], {"network_mode": props["_network_mode"]})
@@ -1061,7 +1074,7 @@ def opts_put(req: Request, body: dict):
         (sdir / "server-icon.png").write_bytes(raw)
     if "rcon.password" in props and srv:
         pass  # per-server rcon password lives in server.properties; server_manager reads it live
-    return {"ok": True, "note": "saved live — restart server to apply server.properties"}
+    return {"ok": True, "note": "saved live — restart server to apply server.properties" + cracked_note}
 
 # ---------- backups / misc ----------
 @app.get("/api/backups")
