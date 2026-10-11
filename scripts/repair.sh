@@ -1,35 +1,58 @@
 #!/usr/bin/env bash
 # VoHost repair — fixes every known "can't connect to :8080" cause in one shot.
-# Run: curl -fsSL https://raw.githubusercontent.com/MArkushark111/VoHost/main/scripts/repair.sh | sudo bash
+# Safer two-step run (avoids executing a half-downloaded script):
+#   curl -fsSL -o /tmp/repair.sh https://raw.githubusercontent.com/MArkushark111/VoHost/main/scripts/repair.sh && sudo bash /tmp/repair.sh
 set -uo pipefail
 PORT="${VOHOST_PORT:-8080}"
 echo "===== VoHost repair ====="
+FAILED=0
+
+fail() { echo "!!! REPAIR FAILED: $1"; echo "!!! Fix the above, then re-run this script."; exit 1; }
+warn() { echo "!!! WARNING: $1 (continuing)"; }
 
 echo "[1/8] fetching latest source"
-rm -rf /tmp/vohost-src /tmp/VoHost-main
-wget -qO /tmp/vohost.tar.gz https://github.com/MArkushark111/VoHost/archive/refs/heads/main.tar.gz
-tar xzf /tmp/vohost.tar.gz -C /tmp
+rm -rf /tmp/vohost-src /tmp/VoHost-main /tmp/vohost.tar.gz
+ok_dl=0
+for i in 1 2 3; do
+  if wget -qO /tmp/vohost.tar.gz https://github.com/MArkushark111/VoHost/archive/refs/heads/main.tar.gz && [ -s /tmp/vohost.tar.gz ]; then ok_dl=1; break; fi
+  echo "download attempt $i failed, retrying..."; sleep 3
+done
+[ "$ok_dl" = 1 ] || fail "could not download the VoHost source tarball (network to github.com blocked?)"
+tar tzf /tmp/vohost.tar.gz >/dev/null 2>&1 || fail "downloaded tarball is corrupt (proxy/cache issue?) - delete /tmp/vohost.tar.gz and re-run"
+tar xzf /tmp/vohost.tar.gz -C /tmp || fail "could not extract the tarball (disk full?)"
 SRC=/tmp/VoHost-main
+[ -f "$SRC/backend/app.py" ] || fail "extracted source has no backend/app.py - bad download, re-run"
+[ -f "$SRC/frontend/index.html" ] || fail "extracted source has no frontend/index.html - bad download, re-run"
 
 echo "[2/8] fixing layout (removes nested backend/backend)"
 mkdir -p /opt/vohost/{backend,data,logs,backups,server,scripts,frontend}
-cp -r "$SRC/backend/." /opt/vohost/backend/
-cp -r "$SRC/frontend/." /opt/vohost/frontend/
+cp -r "$SRC/backend/." /opt/vohost/backend/ || fail "copy backend failed (disk full or read-only fs?)"
+cp -r "$SRC/frontend/." /opt/vohost/frontend/ || fail "copy frontend failed (disk full or read-only fs?)"
 cp "$SRC/scripts/"*.sh /opt/vohost/scripts/ 2>/dev/null || true
 cp "$SRC/systemd/"*.service /tmp/ 2>/dev/null || true
 rm -rf /opt/vohost/backend/backend /opt/vohost/frontend/frontend
 chmod +x /opt/vohost/scripts/*.sh 2>/dev/null || true
-ls /opt/vohost/backend/app.py && ls /opt/vohost/frontend/index.html
+[ -f /opt/vohost/backend/app.py ] && [ -f /opt/vohost/frontend/index.html ] || fail "deploy copy incomplete"
+[ -f /opt/vohost/backend/vohost/tunnel.py ] || warn "tunnel.py missing after copy - old tarball? continuing anyway"
 
 echo "[3/8] python venv + deps"
-apt-get install -y python3 python3-venv python3-pip curl wget unzip >/dev/null 2>&1 || true
+if command -v fuser >/dev/null 2>&1; then
+  for i in $(seq 1 24); do
+    if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then break; fi
+    echo "waiting for apt lock ($i/24)..."; sleep 5
+  done
+fi
+df_avail_kb="$(df /opt/vohost 2>/dev/null | awk 'NR==2{print $4}')"
+if [ -n "$df_avail_kb" ] && [ "$df_avail_kb" -lt 500000 ]; then warn "disk low (${df_avail_kb}KB free on /opt/vohost) - cleanup backups/worlds if install fails"; fi
+apt-get install -y python3 python3-venv python3-pip curl wget unzip >/tmp/vohost-apt.log 2>&1 || warn "apt install had errors - see /tmp/vohost-apt.log"
 rm -rf /opt/vohost/venv
-python3 -m venv /opt/vohost/venv
-/opt/vohost/venv/bin/pip install --upgrade pip -q
-/opt/vohost/venv/bin/pip install -r /opt/vohost/backend/requirements.txt -q
+python3 -m venv /opt/vohost/venv >/tmp/vohost-venv.log 2>&1 || { tail -15 /tmp/vohost-venv.log; fail "python venv creation failed (run: sudo apt install -y python3-venv)"; }
+[ -x /opt/vohost/venv/bin/python ] || fail "venv has no python binary - broken python3-venv, reinstall it"
+/opt/vohost/venv/bin/pip install --upgrade pip -q >/tmp/vohost-pip.log 2>&1 || true
+/opt/vohost/venv/bin/pip install -r /opt/vohost/backend/requirements.txt >>/tmp/vohost-pip.log 2>&1 || { echo "--- pip failed, last lines: ---"; tail -20 /tmp/vohost-pip.log; fail "pip install failed - full log in /tmp/vohost-pip.log (usually no network to pypi.org)"; }
 
 echo "[4/8] import self-test"
-( cd /opt/vohost/backend && /opt/vohost/venv/bin/python -c "import app; print('import OK front=', app.FRONT.exists())" ) || { echo "IMPORT FAILED — paste below:"; cd /opt/vohost/backend && /opt/vohost/venv/bin/python -c "import app"; }
+( cd /opt/vohost/backend && /opt/vohost/venv/bin/python -c "import app; print('import OK front=', app.FRONT.exists())" ) || fail "backend import failed - code or dependency problem, output above"
 
 echo "[5/8] systemd unit (port $PORT)"
 cat > /etc/systemd/system/vohost-dashboard.service <<EOF
@@ -58,7 +81,7 @@ systemctl restart vohost-dashboard
 for u in $(systemctl list-units --type=service --all --no-legend 'vohost-mc@*' 2>/dev/null | awk '{print $1}'); do systemctl reset-failed "$u" >/dev/null 2>&1 || true; done
 systemctl reset-failed vohost-mc >/dev/null 2>&1 || true
 sleep 4
-systemctl is-active vohost-dashboard
+systemctl is-active vohost-dashboard || warn "dashboard service is not active - see step 8 diagnostics"
 
 echo "[7/8] firewall"
 ufw allow 22/tcp >/dev/null 2>&1 || true
@@ -102,9 +125,11 @@ if [ "${reset_accounts:-0}" = "1" ]; then
     echo ">>> DONE: open  http://$IP:$PORT  -> button says 'Create admin' -> pick your own user+pass."
   else
     echo ">>> Still down after reset — paste the STILL DOWN diagnostics above."
+    FAILED=1
   fi
 else
   echo "Accounts kept (working login verified)."
 fi
 echo "IPs: $(hostname -I)"
-echo "===== done ====="
+if [ "$FAILED" = 1 ]; then echo "===== done WITH ERRORS ====="; else echo "===== done ====="; fi
+exit "$FAILED"
