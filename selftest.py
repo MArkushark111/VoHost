@@ -314,6 +314,33 @@ for _ in range(12):
 check("login spam locked out", codes[-1] == 429 and 401 in codes, json.dumps(codes))
 r = c.get("/api/servers"); check("guard spares normal endpoints", r.status_code == 200, r.text[:80])
 
+# 8. push limits mode: machine-derived max resources, prev stash + restore
+r = c.get("/api/push-limits?server_id=" + sid)
+j = r.json() if r.status_code == 200 else {}
+check("push-limits read", r.status_code == 200 and j.get("enabled") is False
+      and j.get("machine", {}).get("cores", 0) >= 1 and j.get("target", {}).get("memory", "").endswith("G")
+      and j.get("current", {}).get("max") == "3G", r.text[:200])
+_tmem = j["target"]["memory"]
+_tc = j["target"]["cores"]
+r = c.post("/api/push-limits", json={"server_id": sid, "enabled": True})
+j = r.json() if r.status_code == 200 else {}
+_sv = j.get("server", {})
+check("push-limits enable", r.status_code == 200 and j.get("enabled") is True
+      and _sv.get("memory_min") == _tmem and _sv.get("memory_max") == _tmem
+      and _sv.get("cpu_cores") == _tc and _sv.get("push_limits") is True
+      and _sv.get("push_limits_prev") == {"min": "1G", "max": "3G", "cores": 2}, r.text[:250])
+r = c.get("/api/push-limits?server_id=" + sid)
+check("push-limits stays on", r.status_code == 200 and r.json().get("enabled") is True, r.text[:120])
+r = c.post("/api/push-limits", json={"server_id": sid, "enabled": False})
+_sv = r.json().get("server", {}) if r.status_code == 200 else {}
+check("push-limits disable restores", r.status_code == 200 and r.json().get("enabled") is False
+      and _sv.get("memory_min") == "1G" and _sv.get("memory_max") == "3G"
+      and _sv.get("cpu_cores") == 2 and _sv.get("push_limits") is False, r.text[:250])
+r = c.post("/api/push-limits", json={"server_id": "nope", "enabled": True})
+check("push-limits bad server 404", r.status_code == 404, r.text[:80])
+r = c2.post("/api/push-limits", json={"server_id": sid, "enabled": True})
+check("push-limits unauth 401", r.status_code == 401, r.text[:80])
+
 print()
 print("ERRORS:", len(errors))
 for e in errors: print("  -", e)

@@ -28,4 +28,4 @@ Features:
 - Console: WS terminal with ANSI colors. Log: tail with colors.
 - Backups: manual + cron scheduler + restore (fixes red-warning state)
 - Access: multi-user + roles (admin / moderator / viewer)
-- Scheduler + Discord webhook, EULA prompt, UFW guide, DuckDNS auto-subdomain, flood protection (SYN hardening, per-IP conn limits, SSH limit, login brute-force lockout)
+- Scheduler + Discord webhook, EULA prompt, UFW guide, DuckDNS auto-subdomain, flood protection (SYN hardening, per-IP conn limits, SSH limit, login brute-force lockout), push limits mode (full machine resources for one server)

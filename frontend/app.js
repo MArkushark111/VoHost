@@ -439,8 +439,30 @@ async function loadOpts() {
     $("#optMemMax").value = (o.memory || {}).max || "4G";
     $("#optCpu").value = o.cpu_cores || 4;
     $("#optPub").checked = !!o.public_page;
+    loadPush();
   } catch (e) { $("#optForm").textContent = e.message; }
 }
+
+// ---------- push limits mode ----------
+async function loadPush() {
+  if (!SID || !$("#pushStatus")) return;
+  try {
+    const j = await api("/api/push-limits");
+    const t = j.target || {}, m = j.machine || {}, c = j.current || {};
+    $("#pushStatus").textContent = j.enabled
+      ? `ON - using ${c.max} RAM + ${c.cores} cores (this PC: ${m.ram_total_gb}G RAM, ${m.cores} cores)`
+      : `off - now ${c.min}/${c.max} RAM, ${c.cores} cores (would set ${t.memory} RAM + ${t.cores} cores)`;
+    $("#pushToggle").textContent = j.enabled ? "Disable push limits" : "Enable push limits";
+    window._pushOn = !!j.enabled;
+  } catch (e) { $("#pushStatus").textContent = e.message; }
+}
+const _pushToggle = $("#pushToggle");
+if (_pushToggle) _pushToggle.onclick = async () => {
+  try {
+    const r = await api("/api/push-limits", { method: "POST", body: JSON.stringify({ enabled: !window._pushOn, server_id: SID }) });
+    toast(r.note || "done", "ok"); loadOpts();
+  } catch (e) { toast(e.message, "error"); }
+};
 $("#optIcon").onchange = e => {
   const f = e.target.files[0]; if (!f) return;
   const r = new FileReader();

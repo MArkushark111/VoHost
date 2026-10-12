@@ -17,6 +17,7 @@ from vohost import nbt_players as NP
 from vohost import backups_sched as BK
 from vohost import duckdns as DD
 from vohost import ddos as DP
+from vohost import pushlimits as PL
 from vohost import servers as SV
 from vohost.auth import ensure_admin, upsert_user, list_users, verify, make_token
 
@@ -1140,6 +1141,43 @@ def sec_put(req: Request, body: dict):
     else:
         res = DP.remove()
     return {"ok": True, "enabled": on, **DP.status(), "log": res.get("log", [])}
+
+# ---------- Push Limits mode: full machine resources for one server ----------
+@app.get("/api/push-limits")
+def push_get(req: Request, server_id: str = ""):
+    need(req, "viewer")
+    srv, _ = resolve(req, server_id)
+    if not srv or (server_id and srv.get("id") != server_id):
+        raise HTTPException(404, "no server")
+    return {"enabled": bool(srv.get("push_limits", False)),
+            "machine": PL.machine(), "target": PL.target(),
+            "current": {"min": srv.get("memory_min", "1G"), "max": srv.get("memory_max", "4G"),
+                        "cores": srv.get("cpu_cores", 4)}}
+
+@app.post("/api/push-limits")
+def push_post(req: Request, body: dict):
+    need(req, "admin")
+    srv, _ = resolve(req, (body or {}).get("server_id", ""))
+    if not srv or ((body or {}).get("server_id") and srv.get("id") != (body or {}).get("server_id")):
+        raise HTTPException(404, "no server")
+    on = bool((body or {}).get("enabled", False))
+    if on:
+        prev = {"min": srv.get("memory_min", "1G"), "max": srv.get("memory_max", "4G"),
+                "cores": srv.get("cpu_cores", 4)}
+        t = PL.target()
+        srv = SV.update_server(srv["id"], {"push_limits": True, "push_limits_prev": prev,
+                                           "memory_min": t["memory"], "memory_max": t["memory"],
+                                           "cpu_cores": t["cores"]})
+        note = f"pushed to {t['memory']} RAM + {t['cores']} cores — restart the server to apply"
+    else:
+        prev = srv.get("push_limits_prev") or {"min": "1G", "max": "4G", "cores": 4}
+        srv = SV.update_server(srv["id"], {"push_limits": False,
+                                           "memory_min": prev.get("min", "1G"),
+                                           "memory_max": prev.get("max", "4G"),
+                                           "cpu_cores": prev.get("cores", 4)})
+        note = "previous limits restored — restart the server to apply"
+    sync_server_limits(srv["id"])
+    return {"ok": True, "enabled": on, "server": srv, "note": note}
 
 # ---------- backups / misc ----------
 @app.get("/api/backups")
