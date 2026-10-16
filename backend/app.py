@@ -1031,6 +1031,7 @@ def opts(req: Request, server_id: str = ""):
             "cpu_cores": (srv or {}).get("cpu_cores", 4),
             "restart": (srv or {}).get("restart", {"enabled": False, "at": ""}),
             "restart_last": RT.last(srv["id"]) if srv else None,
+            "server_time": datetime.now().strftime("%Y-%m-%d %H:%M (UTC%z)"),
             "public_page": bool(cfg.get("public_page", True)),
             "curseforge_key_set": bool(cfg.get("curseforge_api_key")),
             "discord_set": bool(cfg.get("discord_webhook"))}
@@ -1233,6 +1234,39 @@ def voicechat_install(req: Request, body: dict):
     bits.append("voicechat port pinned to 24454" if cfg_ok else "voice port defaults to 24454 on first start")
     return {"ok": True, "file": fn,
             "note": ". ".join(bits) + ". Restart the server, and forward UDP 24454 on the router."}
+
+@app.post("/api/restart/test")
+def restart_test(req: Request, body: dict):
+    """Run a shutdown/startup once right now (debugging aid). Never touches the schedule state."""
+    need(req, "admin")
+    srv, _ = resolve(req, (body or {}).get("server_id", ""))
+    if not srv or ((body or {}).get("server_id") and srv.get("id") != (body or {}).get("server_id")):
+        raise HTTPException(404, "no server")
+    act = str((body or {}).get("action", ""))
+    if act not in ("shutdown", "startup"):
+        raise HTTPException(400, "action must be shutdown|startup")
+    try:
+        online = bool(SM.service_active(server=srv))
+    except Exception:
+        online = False
+    try:
+        if act == "shutdown":
+            if not online:
+                return {"ok": True, "note": "server already stopped - nothing to do"}
+            try:
+                SM.send_command("say [VoHost] Test shutdown starting now", server=srv)
+            except Exception:
+                pass
+            r = SM.action("stop", server_id=srv["id"], server=srv)
+            ok = bool((r or {}).get("ok", True)) if isinstance(r, dict) else True
+            return {"ok": ok, "note": "stopped (test run, schedule untouched)"}
+        if online:
+            return {"ok": True, "note": "server already running - nothing to do"}
+        r = SM.action("start", server_id=srv["id"], server=srv)
+        ok = bool((r or {}).get("ok", True)) if isinstance(r, dict) else True
+        return {"ok": ok, "note": "started (test run, schedule untouched)"}
+    except Exception as e:
+        raise HTTPException(500, f"test run failed: {e}")
 
 # ---------- backups / misc ----------
 @app.get("/api/backups")

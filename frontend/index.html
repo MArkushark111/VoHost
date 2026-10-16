@@ -71,9 +71,10 @@
   <h3>Resources (per server)</h3>
   <div class="row"><div><label>Memory min (e.g. 1G)</label><input id="optMemMin" placeholder="1G"></div><div><label>Memory max (e.g. 4G)</label><input id="optMemMax" placeholder="4G"></div><div><label>CPU cores (systemd quota)</label><input id="optCpu" type="number" min="1" max="32" value="4"></div></div>
   <h3>Scheduled shutdown / startup (daily)</h3>
-  <div class="row"><div><label>Shutdown at (server time, 24h)</label><input id="optRestartDown" type="time" value="" style="max-width:160px"></div><div><label>Startup at (server time, 24h)</label><input id="optRestartUp" type="time" value="" style="max-width:160px"></div><div class="tgl"><span>Enabled</span><input type="checkbox" id="optRestartOn" style="width:auto"></div></div>
+  <div class="row"><div><label>Shutdown at (HH:MM, 24:00 = midnight)</label><input id="optRestartDown" placeholder="00:00" maxlength="5" style="max-width:160px"></div><div><label>Startup at (HH:MM)</label><input id="optRestartUp" placeholder="08:00" maxlength="5" style="max-width:160px"></div><div class="tgl"><span>Enabled</span><input type="checkbox" id="optRestartOn" style="width:auto"></div></div>
+  <div class="row"><button class="act" id="optRestartTestDown">Test shutdown now</button><button class="act" id="optRestartTestUp">Test startup now</button><span class="mut" id="optServerTime"></span></div>
   <p class="mut" id="optRestartLast"></p>
-  <p class="mut">Stops the server at shutdown time (warns players 1 minute ahead) and starts it at startup time. Set only one side for shutdown-only or startup-only. Uses the server machine's clock (24:00 = midnight).</p>
+  <p class="mut">Stops the server at shutdown time (warns players 1 minute ahead) and starts it at startup time. Set only one side for shutdown-only or startup-only. Times use the server clock shown above.</p>
   <div class="tgl"><span>Public status page (no-login link for players)</span><input type="checkbox" id="optPub" style="width:auto"></div>
   <button class="act ok" id="optSave">Save all settings</button>
   <span class="mut">Saving applies server.properties; restart applies it in the game.</span>

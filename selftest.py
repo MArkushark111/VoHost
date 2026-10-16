@@ -458,6 +458,24 @@ check("running startup is no-op", len(done) == 1 and done[0].get("note") == "alr
       and _fon.calls.count(("start", sid)) == 0, json.dumps(done)[:200])
 r = c.get("/api/options?server_id=" + sid)
 check("restart last nested", r.status_code == 200 and (r.json().get("restart_last") or {}).get("startup", {}).get("note") == "already running", r.text[:250])
+import re as _re
+check("server_time shown", bool(_re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", r.json().get("server_time", ""))), r.text[:120])
+_o_sa, _o_sc, _o_ac = A.SM.service_active, A.SM.send_command, A.SM.action
+_sm_calls = []
+A.SM.service_active = lambda server=None, server_id="": True
+A.SM.send_command = lambda cmd, server_id="", server=None: {"ok": True}
+A.SM.action = lambda act, server_id="", server=None: (_sm_calls.append(act), {"ok": True})[1]
+r = c.post("/api/restart/test", json={"server_id": sid, "action": "shutdown"})
+check("restart test shutdown", r.status_code == 200 and "stopped" in r.json().get("note", "") and _sm_calls == ["stop"], r.text[:150])
+r = c.post("/api/restart/test", json={"server_id": sid, "action": "startup"})
+check("restart test startup online no-op", r.status_code == 200 and "already running" in r.json().get("note", "") and _sm_calls == ["stop"], r.text[:150])
+A.SM.service_active, A.SM.send_command, A.SM.action = _o_sa, _o_sc, _o_ac
+r = c.post("/api/restart/test", json={"server_id": sid, "action": "bogus"})
+check("restart test bad action 400", r.status_code == 400, r.text[:80])
+r = c.post("/api/restart/test", json={"server_id": "nope", "action": "startup"})
+check("restart test bad server 404", r.status_code == 404, r.text[:80])
+r = c2.post("/api/restart/test", json={"server_id": sid, "action": "startup"})
+check("restart test unauth 401", r.status_code == 401, r.text[:80])
 
 print()
 print("ERRORS:", len(errors))

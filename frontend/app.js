@@ -451,6 +451,7 @@ async function loadOpts() {
     if (rl.startup) bits.push("startup: " + fmt1(rl.startup));
     if (rl.restart) bits.push("restart: " + fmt1(rl.restart));
     $("#optRestartLast").textContent = bits.length ? ("Last scheduled: " + bits.join(" - ")) : "Nothing scheduled has run yet.";
+    $("#optServerTime").textContent = "Server time now: " + (o.server_time || "?") + " - schedule must match this clock.";
     loadPush();
   } catch (e) { $("#optForm").textContent = e.message; }
 }
@@ -475,6 +476,16 @@ if (_pushToggle) _pushToggle.onclick = async () => {
     toast(r.note || "done", "ok"); loadOpts();
   } catch (e) { toast(e.message, "error"); }
 };
+async function restartTest(action) {
+  try {
+    if (action === "shutdown" && !(await ask("Test shutdown will STOP the server now. Continue?"))) return;
+    const r = await api("/api/restart/test", { method: "POST", body: JSON.stringify({ action, server_id: SID }) });
+    toast(r.note || "done", r.ok === false ? "error" : "ok"); loadStatus();
+  } catch (e) { toast(e.message, "error"); }
+}
+const _rtDown = $("#optRestartTestDown"), _rtUp = $("#optRestartTestUp");
+if (_rtDown) _rtDown.onclick = () => restartTest("shutdown");
+if (_rtUp) _rtUp.onclick = () => restartTest("startup");
 $("#optIcon").onchange = e => {
   const f = e.target.files[0]; if (!f) return;
   const r = new FileReader();
