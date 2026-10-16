@@ -441,10 +441,16 @@ async function loadOpts() {
     $("#optCpu").value = o.cpu_cores || 4;
     $("#optPub").checked = !!o.public_page;
     $("#optRestartOn").checked = !!((o.restart || {}).enabled);
-    $("#optRestartAt").value = (o.restart || {}).at || "";
-    $("#optRestartLast").textContent = o.restart_last
-      ? ("Last scheduled restart: " + (o.restart_last.ok ? "ok" : "FAILED") + " (" + (o.restart_last.note || "") + ")")
-      : "No scheduled restart has run yet.";
+    // legacy single-time restarts show in both fields (= stop+start that minute)
+    $("#optRestartDown").value = (o.restart || {}).shutdown_at || (o.restart || {}).at || "";
+    $("#optRestartUp").value = (o.restart || {}).startup_at || (o.restart || {}).at || "";
+    const rl = o.restart_last || {};
+    const fmt1 = e => (e.ok ? "ok" : "FAILED") + " (" + (e.note || "") + ")";
+    const bits = [];
+    if (rl.shutdown) bits.push("shutdown: " + fmt1(rl.shutdown));
+    if (rl.startup) bits.push("startup: " + fmt1(rl.startup));
+    if (rl.restart) bits.push("restart: " + fmt1(rl.restart));
+    $("#optRestartLast").textContent = bits.length ? ("Last scheduled: " + bits.join(" - ")) : "Nothing scheduled has run yet.";
     loadPush();
   } catch (e) { $("#optForm").textContent = e.message; }
 }
@@ -489,7 +495,7 @@ $("#optSave").onclick = async () => {
   props["online-mode"] = cracked ? "false" : "true";
   props["enforce-secure-profile"] = cracked ? "false" : "true";
   try {
-    await api("/api/options", { method: "PUT", body: JSON.stringify({ props, server_id: SID, timezone: $("#optTz").value, env: $("#optEnv").value, icon_b64: window._iconB64 || undefined, curseforge_api_key: $("#optCF").value || undefined, discord_webhook: $("#optDiscord").value || undefined, memory_min: $("#optMemMin").value, memory_max: $("#optMemMax").value, cpu_cores: parseInt($("#optCpu").value || "4", 10), public_page: $("#optPub").checked, restart: { enabled: $("#optRestartOn").checked, at: $("#optRestartAt").value } }) });
+    await api("/api/options", { method: "PUT", body: JSON.stringify({ props, server_id: SID, timezone: $("#optTz").value, env: $("#optEnv").value, icon_b64: window._iconB64 || undefined, curseforge_api_key: $("#optCF").value || undefined, discord_webhook: $("#optDiscord").value || undefined, memory_min: $("#optMemMin").value, memory_max: $("#optMemMax").value, cpu_cores: parseInt($("#optCpu").value || "4", 10), public_page: $("#optPub").checked, restart: { enabled: $("#optRestartOn").checked, shutdown_at: $("#optRestartDown").value, startup_at: $("#optRestartUp").value } }) });
     toast("Saved. Restart the server to apply.", "ok");
   } catch (e) { toast(e.message, "error"); }
 };

@@ -70,10 +70,10 @@
   <label>Discord webhook</label><input id="optDiscord" placeholder="https://discord.com/api/webhooks/...">
   <h3>Resources (per server)</h3>
   <div class="row"><div><label>Memory min (e.g. 1G)</label><input id="optMemMin" placeholder="1G"></div><div><label>Memory max (e.g. 4G)</label><input id="optMemMax" placeholder="4G"></div><div><label>CPU cores (systemd quota)</label><input id="optCpu" type="number" min="1" max="32" value="4"></div></div>
-  <h3>Scheduled restart (daily)</h3>
-  <div class="row"><div><label>Restart at (server time, 24h)</label><input id="optRestartAt" type="time" value="" style="max-width:160px"></div><div class="tgl"><span>Enabled</span><input type="checkbox" id="optRestartOn" style="width:auto"></div></div>
+  <h3>Scheduled shutdown / startup (daily)</h3>
+  <div class="row"><div><label>Shutdown at (server time, 24h)</label><input id="optRestartDown" type="time" value="" style="max-width:160px"></div><div><label>Startup at (server time, 24h)</label><input id="optRestartUp" type="time" value="" style="max-width:160px"></div><div class="tgl"><span>Enabled</span><input type="checkbox" id="optRestartOn" style="width:auto"></div></div>
   <p class="mut" id="optRestartLast"></p>
-  <p class="mut">Restarts the server once a day at this time (warns players 1 minute ahead). If the server is stopped, it gets started. Uses the server machine's clock.</p>
+  <p class="mut">Stops the server at shutdown time (warns players 1 minute ahead) and starts it at startup time. Set only one side for shutdown-only or startup-only. Uses the server machine's clock (24:00 = midnight).</p>
   <div class="tgl"><span>Public status page (no-login link for players)</span><input type="checkbox" id="optPub" style="width:auto"></div>
   <button class="act ok" id="optSave">Save all settings</button>
   <span class="mut">Saving applies server.properties; restart applies it in the game.</span>

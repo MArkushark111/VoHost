@@ -397,24 +397,31 @@ check("voicechat port pinned", A.VC.ensure_port(sd) is True
 check("voicechat udp fail-safe", A.VC.open_udp(run=lambda c: (_ for _ in ()).throw(OSError("no"))) is False
       and isinstance(A.VC.open_udp(), bool), "")
 
-# 10. scheduled daily restart in Options + runner
-r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "at": "4pm"}})
+# 10. scheduled shutdown / startup in Options + runner
+r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "shutdown_at": "4pm"}})
 check("restart bad time 400", r.status_code == 400, r.text[:120])
-r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "at": "04:00"}})
+r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True}})
+check("restart enabled-no-time 400", r.status_code == 400, r.text[:120])
+r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "shutdown_at": "24:00", "startup_at": "08:00"}})
 check("restart schedule save", r.status_code == 200, r.text[:150])
 r = c.get("/api/options?server_id=" + sid)
-check("restart schedule read", r.status_code == 200 and r.json().get("restart") == {"enabled": True, "at": "04:00"}, r.text[:200])
+check("restart 24:00 normalized", r.status_code == 200 and r.json().get("restart") == {"enabled": True, "shutdown_at": "00:00", "startup_at": "08:00"}, r.text[:200])
+r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "at": "04:00"}})
+check("legacy restart migrates", r.status_code == 200 and r.json() is not None
+      and c.get("/api/options?server_id=" + sid).json().get("restart") == {"enabled": True, "shutdown_at": "04:00", "startup_at": "04:00"}, r.text[:150])
 from vohost import restarts as _RT
 from datetime import datetime as _dt
-_now = _dt(2026, 5, 1, 4, 0)
-check("restart due pure", _RT.due_servers([{"id": "x1", "restart": {"enabled": True, "at": "04:00"}},
-                                          {"id": "x2", "restart": {"enabled": True, "at": "05:00"}},
-                                          {"id": "x3", "restart": {"enabled": False, "at": "04:00"}}], _now)
-      == [{"id": "x1", "restart": {"enabled": True, "at": "04:00"}}], "")
+_now = _dt(2026, 5, 1, 0, 0)
+_due = _RT.due_servers([{"id": "x1", "restart": {"enabled": True, "shutdown_at": "00:00", "startup_at": "08:00"}},
+                        {"id": "x2", "restart": {"enabled": True, "at": "00:00"}},
+                        {"id": "x3", "restart": {"enabled": False, "shutdown_at": "00:00"}}], _now)
+check("shutdown+legacy due pure", [(d["server"]["id"], d["action"]) for d in _due] == [("x1", "shutdown"), ("x2", "restart")], json.dumps(_due))
+check("restart time helpers", _RT.norm_time("24:00") == "00:00" and _RT.norm_time("4:00") == "04:00"
+      and _RT.norm_time("nope") == "" and _RT.valid_time("08:00") and not _RT.valid_time("25:00"), "")
 import time as _tmod
 _hm = _tmod.strftime("%H:%M")
-r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "at": _hm}})
-check("restart schedule set to now", r.status_code == 200, r.text[:120])
+r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "shutdown_at": _hm, "startup_at": ""}})
+check("shutdown schedule set to now", r.status_code == 200, r.text[:120])
 class _FakeSM:
     def __init__(self, online):
         self.online = online
@@ -429,18 +436,28 @@ class _FakeSM:
         return {"ok": True}
 _fon = _FakeSM(True)
 done = _RT.run_due(sm=_fon, warn_seconds=0)
-check("restart runs once online", len(done) == 1 and done[0].get("ok") is True
-      and ("say", "say [VoHost] Scheduled restart in 60 seconds") in _fon.calls
-      and ("restart", sid) in _fon.calls, json.dumps(done) + json.dumps(_fon.calls)[:200])
+check("shutdown runs once online", len(done) == 1 and done[0].get("action") == "shutdown" and done[0].get("ok") is True
+      and ("say", "say [VoHost] Scheduled shutdown in 60 seconds") in _fon.calls
+      and ("stop", sid) in _fon.calls, json.dumps(done) + json.dumps(_fon.calls)[:200])
 done = _RT.run_due(sm=_fon, warn_seconds=0)
-check("restart no double-fire", done == [], json.dumps(done))
+check("shutdown no double-fire", done == [], json.dumps(done))
 _st = _RT._state(); _st.pop(sid, None); _RT._save(_st)
 _foff = _FakeSM(False)
 done = _RT.run_due(sm=_foff, warn_seconds=0)
-check("stopped server gets started", len(done) == 1 and ("start", sid) in _foff.calls
-      and not any(k == "say" for k, _ in _foff.calls), json.dumps(done) + json.dumps(_foff.calls)[:200])
+check("stopped shutdown is no-op", len(done) == 1 and done[0].get("note") == "already stopped"
+      and _foff.calls == [], json.dumps(done) + json.dumps(_foff.calls)[:200])
+_st = _RT._state(); _st.pop(sid, None); _RT._save(_st)
+r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "shutdown_at": "", "startup_at": _hm}})
+check("startup schedule set to now", r.status_code == 200, r.text[:120])
+done = _RT.run_due(sm=_foff, warn_seconds=0)
+check("stopped server gets started", len(done) == 1 and done[0].get("action") == "startup"
+      and ("start", sid) in _foff.calls, json.dumps(done) + json.dumps(_foff.calls)[:200])
+_st = _RT._state(); _st.pop(sid, None); _RT._save(_st)
+done = _RT.run_due(sm=_fon, warn_seconds=0)
+check("running startup is no-op", len(done) == 1 and done[0].get("note") == "already running"
+      and _fon.calls.count(("start", sid)) == 0, json.dumps(done)[:200])
 r = c.get("/api/options?server_id=" + sid)
-check("restart last recorded", r.status_code == 200 and (r.json().get("restart_last") or {}).get("ok") is True, r.text[:200])
+check("restart last nested", r.status_code == 200 and (r.json().get("restart_last") or {}).get("startup", {}).get("note") == "already running", r.text[:250])
 
 print()
 print("ERRORS:", len(errors))

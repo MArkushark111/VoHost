@@ -1078,11 +1078,21 @@ def opts_put(req: Request, body: dict):
             sync_server_limits(srv["id"])
         if "restart" in body and isinstance(body["restart"], dict):
             rs = body["restart"]
-            at = str(rs.get("at", "")).strip()
-            if at and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
-                raise HTTPException(400, "restart time must be HH:MM (24h, e.g. 04:00)")
-            SV.update_server(srv["id"], {"restart": {"enabled": bool(rs.get("enabled", False)),
-                                                    "at": at if rs.get("enabled") else ""}})
+            # new shape {enabled, shutdown_at, startup_at} + legacy {enabled, at}
+            shut = RT.norm_time(rs.get("shutdown_at", "") or "")
+            up = RT.norm_time(rs.get("startup_at", "") or "")
+            legacy = RT.norm_time(rs.get("at", "") or "")
+            if legacy and not shut and not up:
+                shut, up = legacy, legacy  # legacy single-time restart
+            en = bool(rs.get("enabled", False))
+            if en and not shut and not up:
+                raise HTTPException(400, "restart enabled but no time set (shutdown and/or startup HH:MM)")
+            for v in (shut, up):
+                if v and not RT.valid_time(v):
+                    raise HTTPException(400, "restart time must be HH:MM (24h, e.g. 04:00, 24:00 = midnight)")
+            SV.update_server(srv["id"], {"restart": {"enabled": en,
+                                                    "shutdown_at": shut if en else "",
+                                                    "startup_at": up if en else ""}})
     if body.get("icon_b64"):
         raw = base64.b64decode(body["icon_b64"])
         w = h = None
