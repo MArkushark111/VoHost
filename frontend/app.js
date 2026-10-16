@@ -301,7 +301,8 @@ async function loadSec() {
   try {
     const j = await api("/api/security");
     const parts = ["SYN defenses", "connection limits", "SSH limit", "login guard"].filter((_, i) => [j.sysctl, j.chain, j.ufw_ssh, j.login_guard][i]);
-    $("#secStatus").textContent = (j.enabled ? "ENABLED" : "disabled") + (j.enabled ? " - active: " + (parts.join(", ") || "applying...") : "");
+    $("#secStatus").textContent = (j.enabled ? "ENABLED" : "disabled") + (j.enabled ? " - active: " + (parts.join(", ") || "applying...") : "")
+    + ((j.enabled && j.ufw_active && !j.ssh_allow) ? " - WARNING: SSH not allowed in UFW!" : "");
   } catch (e) { $("#secStatus").textContent = e.message; }
 }
 const _secOn = $("#secOn"), _secOff = $("#secOff");

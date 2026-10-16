@@ -82,10 +82,16 @@ systemctl reset-failed vohost-mc >/dev/null 2>&1 || true
 sleep 4
 systemctl is-active vohost-dashboard || warn "dashboard service is not active - see step 8 diagnostics"
 
-echo "[7/8] firewall"
+echo "[7/8] firewall (SSH-safe: UFW is only enabled with port 22 confirmed allowed)"
 ufw allow 22/tcp >/dev/null 2>&1 || true
 ufw allow "$PORT"/tcp >/dev/null 2>&1 || true
-ufw --force enable >/dev/null 2>&1 || true
+if ufw status 2>/dev/null | grep -qi "22/tcp.*ALLOW"; then
+  ufw --force enable >/dev/null 2>&1 || true
+  echo "UFW on, SSH (22/tcp) confirmed allowed - you cannot be locked out by this"
+else
+  echo "!!! WARNING: SSH allow rule NOT confirmed - leaving UFW state untouched (no lockout risk)."
+  echo "!!! Run manually when ready: sudo ufw allow 22/tcp && sudo ufw --force enable"
+fi
 
 echo "[8/8] self-test + accounts"
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"

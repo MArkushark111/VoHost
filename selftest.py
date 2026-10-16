@@ -287,7 +287,7 @@ _orig_run = _DP0._run
 def _fake_run(cmd, timeout=60):
     _seen_cmds.append(cmd)
     if cmd[:2] == ["ufw", "status"]:
-        return 0, "22/tcp LIMIT Anywhere"
+        return 0, "Status: active\n22/tcp ALLOW Anywhere\n22/tcp LIMIT Anywhere"
     return 0, "ok"
 _DP0._run = _fake_run
 res = _DP0.apply([25565])
@@ -296,7 +296,8 @@ check("ddos apply faked", res.get("ok") is True and _DP0.SYSCTL_FILE.exists()
       and any(c[:3] == ["iptables", "-N", _DP0.CHAIN] for c in _seen_cmds)
       and sum(1 for c in _seen_cmds if c[:2] == ["iptables", "-A"]) == 2, json.dumps(res)[:200])
 st = _DP0.status()
-check("ddos status faked", st.get("sysctl") is True and st.get("chain") is True and st.get("ufw_ssh") is True, json.dumps(st))
+check("ddos status faked", st.get("sysctl") is True and st.get("chain") is True and st.get("ufw_ssh") is True
+      and st.get("ssh_allow") is True and st.get("ufw_active") is True, json.dumps(st))
 r = c.put("/api/security", json={"enabled": True})
 check("security enable", r.status_code == 200 and r.json().get("enabled") is True, r.text[:200])
 r = c.get("/api/security")
@@ -304,6 +305,41 @@ check("security read", r.status_code == 200 and r.json().get("enabled") is True 
 r = c.put("/api/security", json={"enabled": False})
 check("security disable", r.status_code == 200 and r.json().get("enabled") is False
       and not _DP0.SYSCTL_FILE.exists(), r.text[:200])
+_cmdsA = []
+def _fake_noallow(cmd, timeout=60):
+    _cmdsA.append(cmd)
+    if cmd[:2] == ["ufw", "status"]:
+        return 0, "Status: active\n8080/tcp ALLOW Anywhere"
+    return 0, "ok"
+_DP0._run = _fake_noallow
+res = _DP0.apply([25565])
+check("ddos apply ensures ssh allow", any(c == ["ufw", "allow", "22/tcp"] for c in _cmdsA)
+      and any("SSH can never be locked out" in m for m in res.get("log", [])), json.dumps(res.get("log"))[:250])
+_cmdsB = []
+_nB = {"n": 0}
+def _fake_restore(cmd, timeout=60):
+    _cmdsB.append(cmd)
+    if cmd[:2] == ["ufw", "status"]:
+        _nB["n"] += 1
+        if _nB["n"] == 1:
+            return 0, "Status: active\n22/tcp LIMIT Anywhere"
+        return 0, "Status: active\n8080/tcp ALLOW Anywhere"
+    return 0, "ok"
+_DP0._run = _fake_restore
+res = _DP0.remove()
+flatB = [" ".join(c) for c in _cmdsB]
+check("ddos remove restores ssh", any("delete limit 22/tcp" in f for f in flatB)
+      and any(c == ["ufw", "allow", "22/tcp"] for c in _cmdsB), json.dumps(res.get("log"))[:250])
+_cmdsC = []
+def _fake_nolimit(cmd, timeout=60):
+    _cmdsC.append(cmd)
+    if cmd[:2] == ["ufw", "status"]:
+        return 0, "Status: active\n22/tcp ALLOW Anywhere\n8080/tcp ALLOW Anywhere"
+    return 0, "ok"
+_DP0._run = _fake_nolimit
+res = _DP0.remove()
+check("ddos remove skips absent limit", not any("delete" in " ".join(c) for c in _cmdsC)
+      and not any(c == ["ufw", "allow", "22/tcp"] for c in _cmdsC), json.dumps(res.get("log"))[:200])
 _DP0._run = _orig_run
 
 # 7. login brute-force guard: hammer bad passwords -> 429, normal traffic unaffected

@@ -37,6 +37,24 @@ def _run(cmd, timeout=60):
         return 1, f"failed: {e}"[:300]
 
 
+def _ufw_status() -> str:
+    """Raw `ufw status` output, '' when ufw is missing. Never raises."""
+    rc, out = _run(["ufw", "status"], timeout=30)
+    return out if rc == 0 else ""
+
+
+def _ufw_active(rules: str) -> bool:
+    return bool(re.search(r"Status:\s*active", rules or "", re.IGNORECASE))
+
+
+def _ssh_allowed(rules: str) -> bool:
+    return bool(re.search(r"22/tcp.*ALLOW", rules or "", re.IGNORECASE))
+
+
+def _ssh_limited(rules: str) -> bool:
+    return bool(re.search(r"22/tcp.*LIMIT", rules or "", re.IGNORECASE))
+
+
 def build_rules(ports) -> list:
     """Pure: iptables argv lists, one conn-limit + one rate DROP per game port."""
     rules = []
@@ -80,6 +98,16 @@ def apply(ports) -> dict:
     log.append(f"{len(rules)} port rules applied")
     rc, _ = _run(["ufw", "limit", "22/tcp"], timeout=60)
     log.append("ufw ssh limit on" if rc == 0 else "ufw ssh limit skipped")
+    # SSH SAFETY: never leave port 22 without an explicit ALLOW. If the allow
+    # rule is missing (fresh ufw, other tools), add it now and verify.
+    rules = _ufw_status()
+    if rules and not _ssh_allowed(rules):
+        rc2, _ = _run(["ufw", "allow", "22/tcp"], timeout=60)
+        log.append("ufw ssh ALLOW ensured (SSH can never be locked out by us)"
+                   if rc2 == 0
+                   else "WARNING: could not add SSH allow rule - run: sudo ufw allow 22/tcp")
+    elif rules:
+        log.append("ufw ssh ALLOW present")
     return {"ok": True, "log": log}
 
 
@@ -96,7 +124,18 @@ def remove() -> dict:
     except Exception as e:
         log.append(f"sysctl file kept: {e}")
     _run(["sysctl", "--system"], timeout=60)
-    _run(["ufw", "--force", "delete", "limit", "22/tcp"], timeout=60)
+    # SSH SAFETY: only delete a limit rule that actually exists (never touch
+    # anything we didn't create), then make sure an ALLOW for 22 remains.
+    rules = _ufw_status()
+    if _ssh_limited(rules):
+        _run(["ufw", "--force", "delete", "limit", "22/tcp"], timeout=60)
+        log.append("ufw ssh limit removed")
+    else:
+        log.append("no ufw ssh limit rule - nothing to delete")
+    rules = _ufw_status()
+    if rules and not _ssh_allowed(rules):
+        _run(["ufw", "allow", "22/tcp"], timeout=60)
+        log.append("ufw ssh ALLOW restored (SSH left open)")
     return {"ok": True, "log": log}
 
 
@@ -107,8 +146,10 @@ def status() -> dict:
     except Exception:
         sysctl_on = False
     rc, _ = _run(["iptables", "-C", "INPUT", "-j", CHAIN], timeout=30)
-    rc2, out2 = _run(["ufw", "status"], timeout=30)
+    out = _ufw_status()
     return {"sysctl": bool(sysctl_on),
             "chain": rc == 0,
-            "ufw_ssh": bool(re.search(r"22/tcp.*LIMIT", out2 or "", re.IGNORECASE)),
+            "ufw_ssh": _ssh_limited(out),
+            "ufw_active": _ufw_active(out),
+            "ssh_allow": _ssh_allowed(out),
             "login_guard": True}
