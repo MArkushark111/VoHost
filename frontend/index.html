@@ -70,6 +70,10 @@
   <label>Discord webhook</label><input id="optDiscord" placeholder="https://discord.com/api/webhooks/...">
   <h3>Resources (per server)</h3>
   <div class="row"><div><label>Memory min (e.g. 1G)</label><input id="optMemMin" placeholder="1G"></div><div><label>Memory max (e.g. 4G)</label><input id="optMemMax" placeholder="4G"></div><div><label>CPU cores (systemd quota)</label><input id="optCpu" type="number" min="1" max="32" value="4"></div></div>
+  <h3>Scheduled restart (daily)</h3>
+  <div class="row"><div><label>Restart at (server time, 24h)</label><input id="optRestartAt" type="time" value="" style="max-width:160px"></div><div class="tgl"><span>Enabled</span><input type="checkbox" id="optRestartOn" style="width:auto"></div></div>
+  <p class="mut" id="optRestartLast"></p>
+  <p class="mut">Restarts the server once a day at this time (warns players 1 minute ahead). If the server is stopped, it gets started. Uses the server machine's clock.</p>
   <div class="tgl"><span>Public status page (no-login link for players)</span><input type="checkbox" id="optPub" style="width:auto"></div>
   <button class="act ok" id="optSave">Save all settings</button>
   <span class="mut">Saving applies server.properties; restart applies it in the game.</span>
@@ -133,6 +137,11 @@
 <section class="card hide" data-s="plugins">
   <h2>Plugins</h2>
   <div class="row"><button class="act" id="plgInstBtn">Installed plugins (0)</button><span class="mut">hint: installs go to the plugins folder; restart the server to load them</span></div>
+  <div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:12px 0">
+    <h3 style="margin:0 0 8px">Simple Voice Chat (proximity voice, UDP 24454)</h3>
+    <div class="row"><button class="act ok" id="vcInstall">Install voice chat</button><span class="mut" id="vcStatus">-</span></div>
+    <p class="mut" style="margin:6px 0 0">One click: newest paper build for your MC version into plugins/, opens UDP 24454 in the firewall. Restart the server after install, and forward UDP 24454 on the router too.</p>
+  </div>
   <h3>Browse Modrinth / CurseForge</h3>
   <div class="row"><select id="plgSrc"><option value="modrinth">Modrinth</option><option value="curseforge">CurseForge</option></select><input id="plgQ" placeholder="search a plugin e.g. Essentials"><button class="act" id="plgGo">Search</button></div>
   <div id="plgList"></div>

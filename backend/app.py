@@ -18,6 +18,8 @@ from vohost import backups_sched as BK
 from vohost import duckdns as DD
 from vohost import ddos as DP
 from vohost import pushlimits as PL
+from vohost import voicechat as VC
+from vohost import restarts as RT
 from vohost import servers as SV
 from vohost.auth import ensure_admin, upsert_user, list_users, verify, make_token
 
@@ -1027,6 +1029,8 @@ def opts(req: Request, server_id: str = ""):
             "server": srv,
             "memory": {"min": (srv or {}).get("memory_min", "1G"), "max": (srv or {}).get("memory_max", "4G")},
             "cpu_cores": (srv or {}).get("cpu_cores", 4),
+            "restart": (srv or {}).get("restart", {"enabled": False, "at": ""}),
+            "restart_last": RT.last(srv["id"]) if srv else None,
             "public_page": bool(cfg.get("public_page", True)),
             "curseforge_key_set": bool(cfg.get("curseforge_api_key")),
             "discord_set": bool(cfg.get("discord_webhook"))}
@@ -1072,6 +1076,13 @@ def opts_put(req: Request, body: dict):
         if mem_patch:
             SV.update_server(srv["id"], mem_patch)
             sync_server_limits(srv["id"])
+        if "restart" in body and isinstance(body["restart"], dict):
+            rs = body["restart"]
+            at = str(rs.get("at", "")).strip()
+            if at and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at):
+                raise HTTPException(400, "restart time must be HH:MM (24h, e.g. 04:00)")
+            SV.update_server(srv["id"], {"restart": {"enabled": bool(rs.get("enabled", False)),
+                                                    "at": at if rs.get("enabled") else ""}})
     if body.get("icon_b64"):
         raw = base64.b64decode(body["icon_b64"])
         w = h = None
@@ -1178,6 +1189,40 @@ def push_post(req: Request, body: dict):
         note = "previous limits restored — restart the server to apply"
     sync_server_limits(srv["id"])
     return {"ok": True, "enabled": on, "server": srv, "note": note}
+
+# ---------- Simple Voice Chat one-click (Paper-family only) ----------
+@app.post("/api/voicechat/install")
+def voicechat_install(req: Request, body: dict):
+    need(req, "moderator")
+    srv, sdir = resolve(req, (body or {}).get("server_id", ""))
+    loader = ((srv or {}).get("loader", "") or "").lower()
+    if loader not in VC.PAPER_LOADERS:
+        try:
+            soft = json.loads((DATA / f"software-{srv['id']}.json").read_text())
+            loader = (soft.get("loader") or loader).lower()
+        except Exception:
+            pass
+    if loader not in VC.PAPER_LOADERS:
+        raise HTTPException(400, f"Simple Voice Chat plugin needs paper/purpur/spigot (this server: {loader or '?'}).")
+    mc = ((srv or {}).get("mc_version", "") or "").strip()
+    if mc.lower() == "latest":
+        mc = ""
+    try:
+        fn, data, num, mcs = VC.fetch(mc or None)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Modrinth download failed: {e}")
+    plugdir = sdir / "plugins"
+    plugdir.mkdir(exist_ok=True)
+    (plugdir / fn).write_bytes(data)
+    udp_ok = VC.open_udp()
+    cfg_ok = VC.ensure_port(sdir)
+    bits = [f"installed {fn} (v{num})"]
+    bits.append("UFW opened for UDP 24454" if udp_ok else "UFW change skipped - allow UDP 24454 manually if players can't connect voice")
+    bits.append("voicechat port pinned to 24454" if cfg_ok else "voice port defaults to 24454 on first start")
+    return {"ok": True, "file": fn,
+            "note": ". ".join(bits) + ". Restart the server, and forward UDP 24454 on the router."}
 
 # ---------- backups / misc ----------
 @app.get("/api/backups")

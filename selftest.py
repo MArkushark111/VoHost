@@ -341,6 +341,71 @@ check("push-limits bad server 404", r.status_code == 404, r.text[:80])
 r = c2.post("/api/push-limits", json={"server_id": sid, "enabled": True})
 check("push-limits unauth 401", r.status_code == 401, r.text[:80])
 
+# 9. Simple Voice Chat one-click (Paper-family only)
+r = c.post("/api/voicechat/install", json={"server_id": sid})
+check("voicechat rejects vanilla", r.status_code == 400 and "paper" in r.text.lower(), r.text[:150])
+r = c.put("/api/servers/" + sid, json={"loader": "paper"})
+check("test server to paper", r.status_code == 200, r.text[:120])
+_orig_fetch = A.VC.fetch
+A.VC.fetch = lambda mc, download=None: ("voicechat-paper-2.5.jar", b"fake-vc-jar", "2.5.0", ["1.21"])
+r = c.post("/api/voicechat/install", json={"server_id": sid})
+check("voicechat installs", r.status_code == 200 and (sd / "plugins" / "voicechat-paper-2.5.jar").exists()
+      and "24454" in r.json().get("note", ""), r.text[:250])
+A.VC.fetch = _orig_fetch
+_vc_cfg = sd / "plugins" / "voicechat"
+_vc_cfg.mkdir(exist_ok=True)
+(_vc_cfg / "voicechat-server.properties").write_text("port=12345\nfoo=bar\n")
+check("voicechat port pinned", A.VC.ensure_port(sd) is True
+      and "port=24454" in (_vc_cfg / "voicechat-server.properties").read_text()
+      and "foo=bar" in (_vc_cfg / "voicechat-server.properties").read_text(), "")
+check("voicechat udp fail-safe", A.VC.open_udp(run=lambda c: (_ for _ in ()).throw(OSError("no"))) is False
+      and isinstance(A.VC.open_udp(), bool), "")
+
+# 10. scheduled daily restart in Options + runner
+r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "at": "4pm"}})
+check("restart bad time 400", r.status_code == 400, r.text[:120])
+r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "at": "04:00"}})
+check("restart schedule save", r.status_code == 200, r.text[:150])
+r = c.get("/api/options?server_id=" + sid)
+check("restart schedule read", r.status_code == 200 and r.json().get("restart") == {"enabled": True, "at": "04:00"}, r.text[:200])
+from vohost import restarts as _RT
+from datetime import datetime as _dt
+_now = _dt(2026, 5, 1, 4, 0)
+check("restart due pure", _RT.due_servers([{"id": "x1", "restart": {"enabled": True, "at": "04:00"}},
+                                          {"id": "x2", "restart": {"enabled": True, "at": "05:00"}},
+                                          {"id": "x3", "restart": {"enabled": False, "at": "04:00"}}], _now)
+      == [{"id": "x1", "restart": {"enabled": True, "at": "04:00"}}], "")
+import time as _tmod
+_hm = _tmod.strftime("%H:%M")
+r = c.put("/api/options", json={"server_id": sid, "props": {}, "restart": {"enabled": True, "at": _hm}})
+check("restart schedule set to now", r.status_code == 200, r.text[:120])
+class _FakeSM:
+    def __init__(self, online):
+        self.online = online
+        self.calls = []
+    def service_active(self, server=None):
+        return self.online
+    def send_command(self, cmd, server_id="", server=None):
+        self.calls.append(("say", cmd))
+        return {"ok": True}
+    def action(self, act, server_id="", server=None):
+        self.calls.append((act, server_id))
+        return {"ok": True}
+_fon = _FakeSM(True)
+done = _RT.run_due(sm=_fon, warn_seconds=0)
+check("restart runs once online", len(done) == 1 and done[0].get("ok") is True
+      and ("say", "say [VoHost] Scheduled restart in 60 seconds") in _fon.calls
+      and ("restart", sid) in _fon.calls, json.dumps(done) + json.dumps(_fon.calls)[:200])
+done = _RT.run_due(sm=_fon, warn_seconds=0)
+check("restart no double-fire", done == [], json.dumps(done))
+_st = _RT._state(); _st.pop(sid, None); _RT._save(_st)
+_foff = _FakeSM(False)
+done = _RT.run_due(sm=_foff, warn_seconds=0)
+check("stopped server gets started", len(done) == 1 and ("start", sid) in _foff.calls
+      and not any(k == "say" for k, _ in _foff.calls), json.dumps(done) + json.dumps(_foff.calls)[:200])
+r = c.get("/api/options?server_id=" + sid)
+check("restart last recorded", r.status_code == 200 and (r.json().get("restart_last") or {}).get("ok") is True, r.text[:200])
+
 print()
 print("ERRORS:", len(errors))
 for e in errors: print("  -", e)

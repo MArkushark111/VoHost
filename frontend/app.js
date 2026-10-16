@@ -439,6 +439,11 @@ async function loadOpts() {
     $("#optMemMax").value = (o.memory || {}).max || "4G";
     $("#optCpu").value = o.cpu_cores || 4;
     $("#optPub").checked = !!o.public_page;
+    $("#optRestartOn").checked = !!((o.restart || {}).enabled);
+    $("#optRestartAt").value = (o.restart || {}).at || "";
+    $("#optRestartLast").textContent = o.restart_last
+      ? ("Last scheduled restart: " + (o.restart_last.ok ? "ok" : "FAILED") + " (" + (o.restart_last.note || "") + ")")
+      : "No scheduled restart has run yet.";
     loadPush();
   } catch (e) { $("#optForm").textContent = e.message; }
 }
@@ -483,7 +488,7 @@ $("#optSave").onclick = async () => {
   props["online-mode"] = cracked ? "false" : "true";
   props["enforce-secure-profile"] = cracked ? "false" : "true";
   try {
-    await api("/api/options", { method: "PUT", body: JSON.stringify({ props, server_id: SID, timezone: $("#optTz").value, env: $("#optEnv").value, icon_b64: window._iconB64 || undefined, curseforge_api_key: $("#optCF").value || undefined, discord_webhook: $("#optDiscord").value || undefined, memory_min: $("#optMemMin").value, memory_max: $("#optMemMax").value, cpu_cores: parseInt($("#optCpu").value || "4", 10), public_page: $("#optPub").checked }) });
+    await api("/api/options", { method: "PUT", body: JSON.stringify({ props, server_id: SID, timezone: $("#optTz").value, env: $("#optEnv").value, icon_b64: window._iconB64 || undefined, curseforge_api_key: $("#optCF").value || undefined, discord_webhook: $("#optDiscord").value || undefined, memory_min: $("#optMemMin").value, memory_max: $("#optMemMax").value, cpu_cores: parseInt($("#optCpu").value || "4", 10), public_page: $("#optPub").checked, restart: { enabled: $("#optRestartOn").checked, at: $("#optRestartAt").value } }) });
     toast("Saved. Restart the server to apply.", "ok");
   } catch (e) { toast(e.message, "error"); }
 };
@@ -754,6 +759,17 @@ window.inst = async (src, id, kind) => {
 };
 $("#modGo").onclick = () => search("#modList", $("#modSrc").value, $("#modQ").value, "mod");
 $("#plgGo").onclick = () => search("#plgList", $("#plgSrc").value, $("#plgQ").value, "plugin");
+const _vcInstall = $("#vcInstall");
+if (_vcInstall) _vcInstall.onclick = async () => {
+  try {
+    if (!SID) { toast("Select a server first.", "error"); return; }
+    $("#vcStatus").textContent = "installing...";
+    const r = await api("/api/voicechat/install", { method: "POST", body: JSON.stringify({ server_id: SID }) });
+    $("#vcStatus").textContent = r.file || "installed";
+    toast(r.note || "Installed.", "ok");
+    refreshInstBadges();
+  } catch (e) { $("#vcStatus").textContent = e.message; toast(e.message, "error"); }
+};
 
 // ---------- files ----------
 let cur = "";

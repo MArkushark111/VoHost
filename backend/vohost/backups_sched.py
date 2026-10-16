@@ -171,4 +171,9 @@ def start_scheduler():
             run_due()
         except Exception:
             pass
+        try:
+            from . import restarts as _RT
+            _RT.run_due()
+        except Exception:
+            pass
         _t.sleep(30)
